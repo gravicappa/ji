@@ -3,9 +3,13 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/select.h>
+#include <sys/stat.h>
 #include <iksemel.h>
 
 #define MAX_ADDRESS 64
+
+#define STR_ONLINE "online"
+#define STR_OFFLINE "offline"
 
 struct contact {
   int fd;
@@ -30,16 +34,16 @@ struct context {
 };
 
 struct contact *contacts = 0;
+chat rootdir[256];
 
 char *address_from_iksid(iksid *jid, char *resource);
 
 int stream_start_hook(struct context *s, int type, iks *node);
 int stream_normal_hook(struct context *s, int type, iks *node);
 int stream_stop_hook(struct context *s, int type, iks *node);
-int stream_error_hook(struct context *s, int type, iks *node);
 
 void send_status(struct context *c, enum ikshowtype status, const char *msg);
-void send_message(struct context *c, enum iksubtype type, 
+void send_message(struct context *c, enum iksubtype type,
                   const char *to, const char *msg);
 void request_roster(struct context *c);
 
@@ -85,6 +89,7 @@ add_contact(iksid *jid)
   u->fd = -1;
   u->jid = jid;
   u->next = contacts;
+  u->show = strdup(STR_OFFLINE);
   contacts = u;
 }
 
@@ -110,13 +115,58 @@ rm_contact(struct contact *c)
   }
 }
 
+static void
+mkdir_rec(const char *dir)
+{
+  char tmp[256];
+  char *p = 0;
+  size_t len;
+
+  snprintf(tmp, sizeof(tmp), "%s", dir);
+  len = strlen(tmp);
+  if (tmp[len - 1] == '/')
+    tmp[len - 1] = 0;
+  for (p = tmp + 1; *p; p++)
+    if (*p == '/') {
+      *p = 0;
+      mkdir(tmp, S_IRWXU);
+      *p = '/';
+    }
+  mkdir(tmp, S_IRWXU);
+}
+
+void
+print_msg(const char *from, const char *msg)
+{
+  char *path, date[128];
+  struct tm *tm;
+  time_t t;
+  FILE *f;
+
+  path = iks_malloc(strlen(rootdir) + 1 + strlen(from) + 3 + 1);
+  if (!path)
+    return;
+
+  sprintf(path, "%s/%s", rootdir, from);
+  mkdir_rec(path, S_IRWXU);
+  sprintf(path, "%s/%s/out", rootdir, from);
+  f = fopen(path, "a");
+  if (f) {
+    t = time(0);
+    strftime(date, sizeof(date), "%F %R", localtime(&t));
+    fprintf(f, "%s %s\n", date, msg);
+    fclose(f);
+  }
+  iks_free(path);
+}
+
 void
 send_status(struct context *c, enum ikshowtype status, const char *msg)
 {
   iks *x;
 
   x = iks_make_pres(status, msg);
-  log_xml(5, "Presence", x);
+  //log_xml(5, "Presence", x);
   iks_send(c->parser, x);
   iks_delete(x);
 }
@@ -152,33 +202,9 @@ request_presence(struct context *c, const char *to)
 
   iks_insert_attrib(x, "type", "probe");
   iks_insert_attrib(x, "to", to);
-  log_xml(5, "Presence request", x);
+  //log_xml(5, "Presence request", x);
   iks_send(c->parser, x);
   iks_delete(x);
-}
-
-int
-jabber_stream_hook(struct context *c, int type, iks *node)
-{
-  int ret = IKS_OK;
-
-  switch (type) {
-    case IKS_NODE_START:
-      ret = stream_start_hook(c, type, node);
-      break;
-    case IKS_NODE_NORMAL:
-      ret = stream_normal_hook(c, type, node);
-      break;
-    case IKS_NODE_STOP:
-      ret = stream_stop_hook(c, type, node);
-      break;
-    case IKS_NODE_ERROR:
-      ret = stream_error_hook(c, type, node);
-      break;
-  }
-  if (node)
-    iks_delete(node);
-  return ret;
 }
 
 int
@@ -210,7 +236,7 @@ stream_normal_hook(struct context *c, int type, iks *node)
 
   if (!strcmp("stream:features", iks_name(node))) {
     features = iks_stream_features(node);
-    if (!c->opt_use_sasl) 
+    if (!c->opt_use_sasl)
       return IKS_OK;
     if (!c->opt_use_tls || iks_is_secure(c->parser)) {
       if (c->is_authorized) {
@@ -227,7 +253,7 @@ stream_normal_hook(struct context *c, int type, iks *node)
         }
       } else {
         method = (features & IKS_STREAM_SASL_MD5)
-            ? IKS_SASL_DIGEST_MD5 
+            ? IKS_SASL_DIGEST_MD5
             : ((features & IKS_STREAM_SASL_MD5) ? IKS_SASL_PLAIN : -1);
         if (method >= 0)
           iks_start_sasl(c->parser, method, c->account->user, c->password);
@@ -259,9 +285,33 @@ stream_stop_hook(struct context *c, int type, iks *node)
   return IKS_HOOK;
 }
 
+int
+jabber_stream_hook(struct context *c, int type, iks *node)
+{
+  int ret = IKS_OK;
+
+  switch (type) {
+    case IKS_NODE_START:
+      ret = stream_start_hook(c, type, node);
+      break;
+    case IKS_NODE_NORMAL:
+      ret = stream_normal_hook(c, type, node);
+      break;
+    case IKS_NODE_STOP:
+      ret = stream_stop_hook(c, type, node);
+      break;
+    case IKS_NODE_ERROR:
+      ret = stream_error_hook(c, type, node);
+      break;
+  }
+  if (node)
+    iks_delete(node);
+  return ret;
+}
+
 iksid *
 create_account(iksparser *parser, const char *address, const char *pass)
-{ 
+{
   iksid *jid;
 
   jid = iks_id_new(iks_parser_stack(parser), address);
@@ -284,15 +334,15 @@ create_account(iksparser *parser, const char *address, const char *pass)
 int
 generic_hook(struct context *c, ikspak *pak)
 {
-  log_printf(0, ";; unknown message\n");
+  log_printf(0, ";; Unknown message.\n");
+  log_xml(1, "Stanza", pak->x);
+  log_printf(1, ";; \n");
   return IKS_FILTER_EAT;
 }
 
 int
 auth_hook(struct context *c, ikspak *pak)
 {
-  log_checkpoint;
-
   send_status(c, IKS_SHOW_AVAILABLE, "Testing");
   send_message(c, IKS_TYPE_NONE, "ramil.fh@jabber.ru", "Test");
   request_roster(c);
@@ -304,10 +354,13 @@ int
 msg_hook(struct context *c, ikspak *pak)
 {
   iks *x = 0;
-  char *s;
+  char *s, *path;
+  struct contact *u;
 
   s = iks_find_cdata(pak->x, "body");
   printf("\nMessage from %s:\n%s\n\n", pak->from->full, s);
+  print_msg(c->rootdir, pak->from->partial, s);
+
   return IKS_FILTER_EAT;
 }
 
@@ -513,6 +566,7 @@ int
 main(int argc, char *argv[])
 {
   log_checkpoint;
+  snprintf(rootdir, sizeof(rootdir), "%s", getenv("HOME"));
   if (jabber_process("ramil.fh@jabber.ru", "z1hfvbkm1")) {
     fprintf(stderr, "Connection error\n");
     return -1;
