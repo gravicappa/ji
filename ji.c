@@ -10,17 +10,53 @@
 #include <fcntl.h>
 #include <iksemel.h>
 
+int keep_alive_ms = 120;
+int log_level = 10;
+int me_status = 0;
+int use_tls = 0;
+int use_sasl = 1;
+int use_plain = 0;
+int is_log_xml = 0;
+
+#define VERSION "0.1"
 #define DEFAULT_RESOURCE "CCCP"
 #define STR_ONLINE "Online"
 #define STR_OFFLINE "Offline"
+#define PING_TIMEOUT 300
 #define JID_BUF 256
+#define PW_BUF 256
 #define PIPE_BUF 4096
 #define PATH_BUF 512
 #define STATUS_BUF 256
-#define PING_TIMEOUT 300
 
-int log_level = 10;
-char me[256] = "yoda";
+struct status {
+  enum ikshowtype show;
+  char msg[STATUS_BUF];
+} statuses[] = {
+  {IKS_SHOW_AVAILABLE, "Here I am."},
+  {IKS_SHOW_AWAY, "Away."},
+};
+
+struct context;
+struct contact;
+
+static void cmd_join(struct context *, struct contact *, char *);
+static void cmd_leave(struct context *, struct contact *, char *);
+static void cmd_away(struct context *, struct contact *, char *);
+static void cmd_roster(struct context *, struct contact *, char *);
+static void cmd_who(struct context *, struct contact *, char *);
+
+struct command {
+  char c;
+  void (*fn)(struct context *, struct contact *, char *);
+} commands[] = {
+  {'j', cmd_join},
+  {'l', cmd_leave},
+  {'a', cmd_away},
+  {'r', cmd_roster},
+  {'w', cmd_who},
+  {0}
+};
 
 struct contact {
   int fd;
@@ -39,31 +75,37 @@ struct context {
   iksfilter *filter;
 
   int is_authorized;
-  int opt_use_tls;
-  int opt_use_sasl;
-  int opt_use_plain;
 };
 
 struct contact *contacts = 0;
 char rootdir[PATH_BUF] = "";
+char me[JID_BUF] = "";
 int server_fd = -1;
 
-char *address_from_iksid(iksid *jid, char *resource);
-
-int stream_start_hook(struct context *s, int type, iks *node);
-int stream_normal_hook(struct context *s, int type, iks *node);
-int stream_stop_hook(struct context *s, int type, iks *node);
-
+static int stream_start_hook(struct context *s, int type, iks *node);
+static int stream_normal_hook(struct context *s, int type, iks *node);
+static int stream_stop_hook(struct context *s, int type, iks *node);
 static void make_path(int dst_bytes, char *dst, const char *dir,
                       const char *file);
-static int open_channel(const char *name);
-
-void send_status(struct context *c, enum ikshowtype status, const char *msg);
-void send_message(struct context *c, enum iksubtype type,
+static int open_pipe(const char *name);
+static void send_status(struct context *c, enum ikshowtype status,
+                        const char *msg);
+static void send_message(struct context *c, enum iksubtype type,
                   const char *to, const char *msg);
-void request_roster(struct context *c);
+static void request_roster(struct context *c);
 
-void
+static size_t
+strlcpy(char *dst, const char *src, size_t size)
+{
+  const char *s = src;
+  for (--size; size && *s; --size, ++dst, ++s)
+    *dst = *s;
+  *dst = 0;
+  while(*s++);
+  return s - src - 1;
+}
+
+static void
 log_printf(int level, const char *fmt, ...)
 {
   va_list args;
@@ -75,20 +117,17 @@ log_printf(int level, const char *fmt, ...)
   }
 }
 
-#define log_checkpoint \
-  log_printf(5, ";; %s:%d %s\n", __FILE__, __LINE__, __func__)
-
-void
+static void
 log_xml(int level, const char *prefix, iks *x)
 {
   char *s;
 
   s = iks_string(0, x);
-  log_printf(level, ";; %s: %s\n", prefix, s);
+  log_printf(level, "%s: %s\n", prefix, s);
   iks_free(s);
 }
 
-struct contact *
+static struct contact *
 add_contact(const char *jid)
 {
   char infile[PATH_BUF];
@@ -106,9 +145,8 @@ add_contact(const char *jid)
   if (!u)
     return 0;
 
-  u->fd = open_channel(infile);
-  strncpy(u->jid, jid, sizeof(u->jid) - 1);
-  u->jid[sizeof(u->jid) - 1] = 0;
+  strlcpy(u->jid, jid, sizeof(u->jid));
+  u->fd = open_pipe(u->jid);
   u->next = contacts;
   strcpy(u->show, STR_OFFLINE);
   strcpy(u->status, "");
@@ -117,7 +155,7 @@ add_contact(const char *jid)
   return u;
 }
 
-void
+static void
 rm_contact(struct contact *c)
 {
   char infile[PATH_BUF];
@@ -137,6 +175,7 @@ rm_contact(struct contact *c)
       remove(infile);
     close(c->fd);
   }
+  free(c);
 }
 
 static int
@@ -157,7 +196,7 @@ read_line(int fd, size_t len, char *buf)
 static void
 mkdir_rec(const char *dir)
 {
-  char tmp[256];
+  char tmp[PATH_BUF];
   char *p = 0;
   size_t len;
 
@@ -178,16 +217,18 @@ static void
 make_path(int dst_bytes, char *dst, const char *dir, const char *file)
 {
   dst[0] = 0;
-  if (dst_bytes > strlen(rootdir) + 1 + strlen(dir) + 1 + strlen(file) + 1) {
+  if (dst_bytes > strlen(rootdir) + 1 + strlen(dir) + 1 + strlen(file) + 1)
     sprintf(dst, "%s/%s/%s", rootdir, dir, file);
-  }
 }
 
 static int
-open_channel(const char *name)
+open_pipe(const char *name)
 {
   char path[PATH_BUF];
 
+  make_path(sizeof(path), path, name, "");
+  if (access(path, F_OK) == -1)
+    mkdir_rec(path);
   make_path(sizeof(path), path, name, "in");
   if (!path[0])
     return -1;
@@ -196,12 +237,11 @@ open_channel(const char *name)
   return open(path, O_RDONLY | O_NONBLOCK, 0);
 }
 
-void
+static void
 print_msg(const char *from, const char *fmt, ...)
 {
   va_list args;
   char path[PATH_BUF], date[128];
-  struct tm *tm;
   time_t t;
   FILE *f;
 
@@ -215,7 +255,7 @@ print_msg(const char *from, const char *fmt, ...)
   f = fopen(path, "a");
   if (f) {
     t = time(0);
-    strftime(date, sizeof(date), "%F %R", localtime(&t));
+    strftime(date, sizeof(date), "%Y-%m-%d %H:%M", localtime(&t));
     fprintf(f, "%s ", date);
     va_start(args, fmt);
     vfprintf(f, fmt, args);
@@ -224,18 +264,18 @@ print_msg(const char *from, const char *fmt, ...)
   }
 }
 
-void
+static void
 send_status(struct context *c, enum ikshowtype status, const char *msg)
 {
   iks *x;
 
   x = iks_make_pres(status, msg);
-  //log_xml(5, "Presence", x);
+  /*log_xml(5, "Presence", x);*/
   iks_send(c->parser, x);
   iks_delete(x);
 }
 
-void
+static void
 send_message(struct context *c, enum iksubtype type, const char *to,
              const char *msg)
 {
@@ -246,7 +286,7 @@ send_message(struct context *c, enum iksubtype type, const char *to,
   iks_delete(x);
 }
 
-void
+static void
 request_roster(struct context *c)
 {
   iks *x;
@@ -257,31 +297,31 @@ request_roster(struct context *c)
   iks_delete(x);
 }
 
-void
+#if 0
+static void
 request_presence(struct context *c, const char *to)
 {
   iks *x;
 
   x = iks_new("presence");
-
   iks_insert_attrib(x, "type", "probe");
   iks_insert_attrib(x, "to", to);
-  //log_xml(5, "Presence request", x);
   iks_send(c->parser, x);
   iks_delete(x);
 }
+#endif
 
-int
+static int
 stream_start_hook(struct context *c, int type, iks *node)
 {
-  if (c->opt_use_tls && !iks_is_secure(c->parser)) {
+  if (use_tls && !iks_is_secure(c->parser)) {
     iks_start_tls(c->parser);
   }
-  if (!c->opt_use_sasl) {
+  if (!use_sasl) {
     iks *x;
     char *sid = 0;
 
-    if (!c->opt_use_plain)
+    if (!use_plain)
       sid = iks_find_attrib(node, "id");
     x = iks_make_auth(c->account, c->password, sid);
     iks_insert_attrib(x, "id", "auth");
@@ -291,7 +331,7 @@ stream_start_hook(struct context *c, int type, iks *node)
   return IKS_OK;
 }
 
-int
+static int
 stream_normal_hook(struct context *c, int type, iks *node)
 {
   int features, method;
@@ -300,9 +340,9 @@ stream_normal_hook(struct context *c, int type, iks *node)
 
   if (!strcmp("stream:features", iks_name(node))) {
     features = iks_stream_features(node);
-    if (!c->opt_use_sasl)
+    if (!use_sasl)
       return IKS_OK;
-    if (!c->opt_use_tls || iks_is_secure(c->parser)) {
+    if (!use_tls || iks_is_secure(c->parser)) {
       if (c->is_authorized) {
         if (features & IKS_STREAM_BIND) {
           x = iks_make_resource_bind(c->account);
@@ -335,59 +375,49 @@ stream_normal_hook(struct context *c, int type, iks *node)
   return IKS_OK;
 }
 
-int
+static int
 stream_error_hook(struct context *c, int type, iks *node)
 {
-  log_printf(0, ";; Error: Stream error\n");
+  log_printf(0, "Error: Stream error\n");
   return IKS_HOOK;
 }
 
-int
+static int
 stream_stop_hook(struct context *c, int type, iks *node)
 {
-  log_printf(3, ";; Server disconnected\n");
+  log_printf(3, "Server disconnected\n");
   return IKS_HOOK;
 }
 
-int
+static int
 jabber_stream_hook(struct context *c, int type, iks *node)
 {
   int ret = IKS_OK;
 
   switch (type) {
-    case IKS_NODE_START:
-      ret = stream_start_hook(c, type, node);
-      break;
-    case IKS_NODE_NORMAL:
-      ret = stream_normal_hook(c, type, node);
-      break;
-    case IKS_NODE_STOP:
-      ret = stream_stop_hook(c, type, node);
-      break;
-    case IKS_NODE_ERROR:
-      ret = stream_error_hook(c, type, node);
-      break;
+    case IKS_NODE_START: ret = stream_start_hook(c, type, node); break;
+    case IKS_NODE_NORMAL: ret = stream_normal_hook(c, type, node); break;
+    case IKS_NODE_STOP: ret = stream_stop_hook(c, type, node); break;
+    case IKS_NODE_ERROR: ret = stream_error_hook(c, type, node); break;
   }
   if (node)
     iks_delete(node);
   return ret;
 }
 
-iksid *
+static iksid *
 create_account(iksparser *parser, const char *address, const char *pass)
 {
   iksid *jid;
+  char s[JID_BUF];
 
   jid = iks_id_new(iks_parser_stack(parser), address);
+  strlcpy(me, jid->user, sizeof(me));
   if (jid && !jid->resource) {
-    char *s;
-
-    s = iks_malloc(strlen(jid->user) + 1 + strlen(jid->server) + 1
-                         + strlen(DEFAULT_RESOURCE) + 1);
-    if (s) {
+    if (sizeof(s) > (strlen(jid->user) + 1 + strlen(jid->server) + 1
+                     + strlen(DEFAULT_RESOURCE) + 1)) {
       sprintf(s, "%s@%s/%s", jid->user, jid->server, DEFAULT_RESOURCE);
       jid = iks_id_new(iks_parser_stack(parser), s);
-      iks_free(s);
     } else {
       jid = 0;
     }
@@ -395,44 +425,38 @@ create_account(iksparser *parser, const char *address, const char *pass)
   return jid;
 }
 
-int
+static int
 generic_hook(struct context *c, ikspak *pak)
 {
-  log_printf(1, ";; Unknown message.\n");
+  log_printf(1, "Unknown message.\n");
   log_xml(2, "Stanza", pak->x);
-  log_printf(2, ";; \n");
+  log_printf(2, "\n");
   return IKS_FILTER_EAT;
 }
 
-int
+static int
 auth_hook(struct context *c, ikspak *pak)
 {
-  send_status(c, IKS_SHOW_AVAILABLE, "Testing");
-  send_message(c, IKS_TYPE_NONE, "ramil.fh@jabber.ru", "Test");
-  request_roster(c);
-
+  send_status(c, statuses[me_status].show, statuses[me_status].msg);
   return IKS_FILTER_EAT;
 }
 
-int
+static int
 msg_hook(struct context *c, ikspak *pak)
 {
-  iks *x = 0;
-  char *s, *path;
-  struct contact *u;
+  char *s;
 
   s = iks_find_cdata(pak->x, "body");
+  add_contact(pak->from->partial);
   print_msg(pak->from->partial, "<%s> %s\n", pak->from->user, s);
   return IKS_FILTER_EAT;
 }
 
-int
+static int
 presence_hook(struct context *c, ikspak *pak)
 {
-  iks *x;
   char *show, *status;
   struct contact *u;
-  int printed = 0;
 
   if (pak->subtype == IKS_TYPE_ERROR) {
     show = STR_OFFLINE;
@@ -452,10 +476,8 @@ presence_hook(struct context *c, ikspak *pak)
         print_msg(pak->from->partial, "-!- %s(%s) is %s (%s)\n",
                   pak->from->user, pak->from->full, show, status);
       }
-      strncpy(u->show, show, sizeof(u->show) - 1);
-      u->show[sizeof(u->show) - 1] = 0;
-      strncpy(u->status, status, sizeof(u->status) - 1);
-      u->status[sizeof(u->status) - 1] = 0;
+      strlcpy(u->show, show, sizeof(u->show));
+      strlcpy(u->status, status, sizeof(u->status));
       break;
     }
   }
@@ -466,12 +488,12 @@ presence_hook(struct context *c, ikspak *pak)
   return IKS_FILTER_EAT;
 }
 
-int
+static int
 roster_hook(struct context *c, ikspak *pak)
 {
   iks *x;
-  iksid *id;
   char *name, *jid, *sub;
+  struct contact *u;
 
   x = iks_find(pak->x, "query");
   if (x) {
@@ -482,23 +504,31 @@ roster_hook(struct context *c, ikspak *pak)
         sub = iks_find_attrib(x, "subscription");
         if (!name)
           name = jid;
-        //add_contact(iks_id_new(iks_parser_stack(c->parser), jid));
+        for (u = contacts; u; u = u->next)
+          if (!strcmp(u->jid, jid))
+            break;
+        if (u)
+          print_msg("", "* %s - %s - (%s) - %s [%s]\n", name, jid,
+                    u->show, u->status, sub);
+        else
+          print_msg("", "* %s - %s - (Offline) - [%s]\n", name, jid,
+                    sub);
       }
     }
   }
   return IKS_FILTER_EAT;
 }
 
-int
+static int
 error_hook(struct context *c, ikspak *pak)
 {
-  log_printf(0, ";; Error occured\n");
+  log_printf(0, "Error: XMPP\n");
   log_xml(2, "Stanza", pak->x);
-  log_printf(2, ";; \n");
+  log_printf(2, "\n");
   return IKS_FILTER_EAT;
 }
 
-iksfilter *
+static iksfilter *
 create_filter(struct context *c)
 {
   iksfilter *flt;
@@ -528,82 +558,104 @@ create_filter(struct context *c)
   return flt;
 }
 
-int
-jabber_connect(iksparser *parser, iksid *jid) {
-  int e;
+static void
+cmd_join(struct context *c, struct contact *u, char *s)
+{
+  char *p;
+  iksid *id;
 
-  e = iks_connect_tcp(parser, jid->server, IKS_JABBER_PORT);
-  switch(e) {
-    case IKS_OK:
-      log_printf(3, ";; Connected to server\n");
-      break;
-    case IKS_NET_NODNS:
-      log_printf(0, ";; Error: hostname lookup failed\n");
-      break;
-    case IKS_NET_NOCONN:
-      log_printf(0, ";; Error: connection failed\n");
-      break;
-    default:
-      log_printf(0, ";; Error: IO\n");
+  p = strchr(s + 3, ' ');
+  if (p)
+    *p = 0;
+  id = iks_id_new(iks_parser_stack(c->parser), s + 3);
+  add_contact(id->partial);
+  if (p) {
+    send_message(c, IKS_TYPE_NONE, id->full, p + 1);
+    print_msg(id->partial, "<%s> %s\n", me, p + 1);
   }
-  return e != IKS_OK;
 }
 
-void
-do_contact_input_string(struct context *c, struct contact *u, char *s)
+static void
+cmd_leave(struct context *c, struct contact *u, char *s)
 {
   char *p;
   iksid *id;
   struct contact *con;
 
+  p = strchr(s + 3, ' ');
+  if (p) {
+    *p = 0;
+    id = iks_id_new(iks_parser_stack(c->parser), s + 3);
+    for (con = contacts; con; con = con->next)
+      if (!strcmp(con->jid, id->partial)) {
+        rm_contact(con);
+        break;
+      }
+  } else if (u->jid[0]) {
+    rm_contact(u);
+  }
+}
+
+static void
+cmd_away(struct context *c, struct contact *u, char *s)
+{
+  char *p;
+
+  me_status = !me_status;
+  p = strchr(s + 3, ' ');
+  if (p) {
+    *p = 0;
+  }
+  if (s[2]) {
+    strlcpy(statuses[me_status].msg, s + 3, sizeof(statuses[me_status].msg));
+  }
+  send_status(c, statuses[me_status].show, statuses[me_status].msg);
+}
+
+static void
+cmd_roster(struct context *c, struct contact *u, char *s)
+{
+  request_roster(c);
+}
+
+static void
+cmd_who(struct context *c, struct contact *u, char *s)
+{
+}
+
+static void
+do_contact_input_string(struct context *c, struct contact *u, char *s)
+{
+  struct command *cmd;
+
   if (s[0] == 0)
     return;
 
   if (s[0] != '/') {
-    send_message(c, IKS_TYPE_NONE, u->jid, s);
+    if (u->jid[0])
+      send_message(c, IKS_TYPE_NONE, u->jid, s);
     print_msg(u->jid, "<%s> %s\n", me, s);
     return;
   }
-  switch (s[1]) {
-    case 'j':
-      p = strchr(s + 3, ' ');
-      if (p)
-        *p = 0;
-      id = iks_id_new(iks_parser_stack(c->parser), s + 3);
-      add_contact(id->partial);
-      if (p) {
-        send_message(c, IKS_TYPE_NONE, id->full, p + 1);
-        print_msg(id->partial, "<%s> %s\n", me, p + 1);
-      }
+  for (cmd = commands; cmd->c; ++cmd)
+    if (cmd->c == s[1]) {
+      cmd->fn(c, u, s);
       break;
-    case 'l':
-      p = strchr(s + 3, ' ');
-      if (p) {
-        *p = 0;
-        id = iks_id_new(iks_parser_stack(c->parser), s + 3);
-        for(con = contacts; con; con = con->next)
-          if (!strcmp(con->jid, id->partial)) {
-            rm_contact(con);
-            break;
-          }
-      } else if (u->jid[0]) {
-        rm_contact(u);
-      }
-      break;
-    default:
-      send_message(c, IKS_TYPE_NONE, u->jid, s);
-      print_msg(u->jid, "<%s> %s\n", me, s);
+    }
+  if (!cmd->c) {
+    send_message(c, IKS_TYPE_NONE, u->jid, s);
+    print_msg(u->jid, "<%s> %s\n", me, s);
   }
 }
 
-int
+static void
 handle_contact_input(struct context *c, struct contact *u)
 {
   static char buf[PIPE_BUF];
 
   if (read_line(u->fd, sizeof(buf), buf) == -1) {
     close(u->fd);
-    u->fd = open_channel(u->jid);
+    u->fd = open_pipe(u->jid);
     if (u->fd < 0)
       rm_contact(u);
   } else {
@@ -611,16 +663,16 @@ handle_contact_input(struct context *c, struct contact *u)
   }
 }
 
-int
+static int
 jabber_do_connection(struct context *c)
 {
-  int e, is_running = 1, res, fd, max_fd;
+  int is_running = 1, res, fd, max_fd;
   struct contact *u;
   fd_set fds;
   time_t last_response;
+  struct timeval tv;
 
   add_contact("");
-
   fd = iks_fd(c->parser);
   last_response = time(0);
   while (is_running) {
@@ -635,7 +687,9 @@ jabber_do_connection(struct context *c)
           max_fd = u->fd;
       }
     }
-    res = select(max_fd + 1, &fds, 0, 0, 0);
+    tv.tv_sec = keep_alive_ms;
+    tv.tv_usec = 0;
+    res = select(max_fd + 1, &fds, 0, 0, (keep_alive_ms > 0) ? &tv : 0);
     if (res > 0) {
       if (FD_ISSET(fd, &fds)) {
         switch (iks_recv(c->parser, 1)) {
@@ -646,22 +700,25 @@ jabber_do_connection(struct context *c)
             is_running = 0;
         }
       }
+#if 0
       if (time(0) - last_response >= PING_TIMEOUT) {
-        log_printf(0, ";; Ping timeout\n");
+        log_printf(0, "Ping timeout\n");
         is_running = 0;
       }
+#endif
       for (u = contacts; u; u = u->next)
-        if (FD_ISSET(u->fd, &fds)) {
+        if (FD_ISSET(u->fd, &fds))
           handle_contact_input(c, u);
-        }
-    } else {
-      break;
-    }
+    } else if (res == 0) {
+      if (keep_alive_ms > 0)
+        iks_send_raw(c->parser, " ");
+    } else
+      is_running = 0;
   }
   return 0;
 }
 
-void
+static void
 log_hook(struct context *c, const char *data, size_t size, int is_incoming)
 {
   if (iks_is_secure(c->parser))
@@ -671,37 +728,53 @@ log_hook(struct context *c, const char *data, size_t size, int is_incoming)
   fputs("\n\n", stderr);
 }
 
-int
-jabber_process(const char *address, const char *pass)
+static int
+jabber_connect(iksparser *p, iksid *jid, const char *server)
 {
   int e;
-  struct context c = {0};
 
-  c.opt_use_sasl = 1;
+  e = iks_connect_tcp(p, (server) ? server : jid->server, IKS_JABBER_PORT);
+  switch (e) {
+  case IKS_OK:
+    break;
+  case IKS_NET_NODNS:
+    log_printf(0, "Error: Hostname lookup failed\n");
+    break;
+  case IKS_NET_NOCONN:
+    log_printf(0, "Error: Connection failed\n");
+    break;
+  default:
+    log_printf(0, "Error: I/O\n");
+  }
+  return e != IKS_OK;
+}
+
+static int
+jabber_process(const char *address, const char *server, const char *pass)
+{
+  int ret = 1;
+  struct context c = { 0 };
+
   c.parser = iks_stream_new(IKS_NS_CLIENT, &c,
-                            (iksStreamHook *)jabber_stream_hook);
+                            (iksStreamHook *) jabber_stream_hook);
   if (c.parser == 0)
     return 1;
-
-  //iks_set_log_hook(c.parser, (iksLogHook *) log_hook);
+  if (is_log_xml)
+    iks_set_log_hook(c.parser, (iksLogHook *) log_hook);
   c.account = create_account(c.parser, address, pass);
   if (c.account) {
     c.password = (char *)pass;
     c.filter = create_filter(&c);
-    if (c.filter) {
-      if (jabber_connect(c.parser, c.account) == 0) {
-        jabber_do_connection(&c);
-      }
+    if (c.filter && jabber_connect(c.parser, c.account, server) == 0) {
+      ret = jabber_do_connection(&c);
     }
   }
   iks_parser_delete(c.parser);
-  c.account = 0;
-  c.filter = 0;
-  c.parser = 0;
+  return ret;
 }
 
 #if 0
-void
+static void
 cleanup()
 {
   struct contact *c, *p;
@@ -713,14 +786,67 @@ cleanup()
 }
 #endif
 
+static void
+usage()
+{
+  fprintf(stderr, "%s",
+    "ji - jabber it - " VERSION "\n"
+    "(C)opyright 2010 Ramil Farkhshatov\n"
+    "usage: ji [-r <jabber dir>] [-j <jid>] [-s <server>] [-n <nick>]\n"
+    "          [-p <file with password>]\n");
+}
+
+static int
+read_pw(const char *filename, int pw_bytes, char *pw)
+{
+  FILE *f;
+  int len;
+
+  f = fopen(filename, "r");
+  if (!f)
+    return 1;
+
+  fgets(pw, pw_bytes, f);
+  fclose(f);
+
+  len = strlen(pw);
+  if (pw[len - 1] == '\n')
+    pw[len - 1] = 0;
+
+  return 0;
+}
+
 int
 main(int argc, char *argv[])
 {
-  snprintf(rootdir, sizeof(rootdir), "%s/mnt/jabber", getenv("HOME"));
-  log_printf(5, "rootdir: '%s'\n", rootdir);
-  if (jabber_process("ramil.fh@jabber.ru", "z1hfvbkm1")) {
-    fprintf(stderr, "Connection error\n");
-    return -1;
+  int i;
+  char *jid = 0, *pwfile = 0, *server = 0, *s;
+  char pw[PW_BUF];
+
+  s = getenv("HOME");
+  snprintf(rootdir, sizeof(rootdir), "%s/mnt/jabber", (s) ? s : ".");
+  s = getenv("USER");
+  strlcpy(me, (s) ? s : "me", sizeof(me));
+
+  for (i = 1; i < argc - 1 && argv[i][0] == '-'; ++i) {
+    switch (argv[i][1]) {
+      case 'r': strlcpy(rootdir, argv[++i], sizeof(rootdir)); break;
+      case 'n': strlcpy(me, argv[++i], sizeof(me)); break;
+      case 'j': jid = argv[++i]; break;
+      case 's': server = argv[++i]; break;
+      case 'p': pwfile = argv[++i]; break;
+      default: usage(); return 1;
+    }
+  }
+  if (!(jid && pwfile)) {
+    usage();
+    return 1;
+  }
+  if (read_pw(pwfile, sizeof(pw), pw))
+    return 1;
+  if (jabber_process(jid, server, pw)) {
+    log_printf(0, "Connection error\n");
+    return 1;
   }
   return 0;
 }
