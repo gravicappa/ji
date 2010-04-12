@@ -5,7 +5,7 @@ LDFLAGS = -lutil ${shell pkg-config --libs iksemel}
 prefix = /usr/local
 bindir = ${prefix}/bin
 mandir = ${prefix}/share/man
-mandir = ${mandir}/man1
+man1dir = ${mandir}/man1
 src = ji.c
 obj = ji.o
 
@@ -13,10 +13,10 @@ all: ${exe}
 
 install: all
 	mkdir -p ${destdir}${bindir}
-#	mkdir -p ${destdir}${man1dir}
-#	install -d ${destdir}${bindir} ${destdir}${man1dir}
+	mkdir -p ${destdir}${man1dir}
+	install -d ${destdir}${bindir} ${destdir}${man1dir}
 	install -m 775 ${exe} ${destdir}${bindir}
-#	install -m 444 ${man} ${destdir}${man1dir}
+	install -m 444 ${man} ${destdir}${man1dir}
 
 uninstall: all
 	rm ${destdir}${bindir}/${exe}
