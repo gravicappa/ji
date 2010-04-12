@@ -297,7 +297,6 @@ request_roster(struct context *c)
   iks_delete(x);
 }
 
-#if 0
 static void
 request_presence(struct context *c, const char *to)
 {
@@ -309,7 +308,6 @@ request_presence(struct context *c, const char *to)
   iks_send(c->parser, x);
   iks_delete(x);
 }
-#endif
 
 static int
 stream_start_hook(struct context *c, int type, iks *node)
@@ -621,6 +619,10 @@ cmd_roster(struct context *c, struct contact *u, char *s)
 static void
 cmd_who(struct context *c, struct contact *u, char *s)
 {
+  if (s[2] && s[3])
+    request_presence(c, s + 3);
+  else if (u->jid[0])
+    request_presence(c, u->jid);
 }
 
 static void
