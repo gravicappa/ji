@@ -1,18 +1,25 @@
 exe = ji
+man = ji.1
 CFLAGS = -O0 -g -pedantic -Wall ${pkg-config --cflags iksemel}
 LDFLAGS = -lutil ${shell pkg-config --libs iksemel}
 destdir = /usr/local
 bindir = bin
+mandir = bin
 src = ji.c
 obj = ji.o
 
 all: ${exe}
 
 install: all
-	install -m 755 ${exe} ${destdir}/${bindir}
+	mkdir -p ${destdir}/${bindir}
+	#mkdir -p ${destdir}/${man1dir}
+	#install -d ${destdir}/${bindir} ${destdir}/${man1dir}
+	install -m 775 ${exe} ${destdir}/${bindir}
+	#install -m 444 ${man} ${destdir}/${man1dir}
 
 uninstall: all
 	rm ${destdir}/${bindir}/${exe}
+	rm ${destdir}/${man1dir}/${man}
 
 ${exe} : ${obj}
 	${CC} -o $@ $^ ${LDFLAGS} -o $@ 
@@ -21,4 +28,4 @@ ${exe} : ${obj}
 	${CC} -c ${CFLAGS} $< -o $@
 
 clean:
-	-rm ${exe} 2>/dev/null
+	-rm ${obj} ${exe} 2>/dev/null
