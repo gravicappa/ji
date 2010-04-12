@@ -1,5 +1,6 @@
 exe = ji
 CFLAGS += -O0 -g
+CFLAGS += -pedantic -Wall
 CFLAGS += ${pkg-config --cflags iksemel}
 LDFLAGS += -lutil ${shell pkg-config --libs iksemel}
 destdir=/usr/local
