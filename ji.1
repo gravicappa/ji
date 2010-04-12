@@ -1,0 +1,81 @@
+.de FN
+\fI\|\\$1\|\fP\\$2
+..
+.TH ji 1
+.SH NAME
+ji \- jabber it
+
+.SH DESCRIPTION
+.SH SYNOPSIS
+.B ji
+.RB [ \-j
+.IR jid ]
+.RB [ \-p
+.IR "password file" ]
+.RB [ \-r
+.IR prefix ]
+.RB [ \-s
+.IR servername ]
+.RB [ \-n
+.IR nick ]
+.SH OPTIONS
+.TP
+.BI \-j " jid"
+specifies your JID in form 
+.I user@server/resource
+.TP
+.BI \-p " password file"
+specifies text file where password is stored.
+.TP
+.BI \-r " prefix"
+overrides the default jabber path (~/mnt/jabber).
+.TP
+.BI \-s " servername"
+overrides server name specified in JID.
+.TP
+.BI \-n " nick"
+overrides your default nickname appearing in history files (me).
+
+.SH DIRECTORIES
+.TP
+.FN ~/mnt/jabber
+In this directory the jabber tree will be created which contains FIFO, the
+output file and contacts directories. If you open a chat with someone (or vice
+versa) a new directory with the name of collocutor's JID will be created in
+the ~/mnt/jabber directory.
+
+.SH COMMANDS
+.TP
+.FN /j " jid [<message>]"
+open conversation
+.TP
+.FN /l " [jid]"
+close conversation
+.TP
+.FN /r
+query roster items
+.TP
+.FN /a " [<presence message>]"
+toggle online/away status
+.TP
+.FN /w " [jid]"
+query contact information
+.TP
+Everything which is not a command will simply be posted to contact.
+.TP
+.FN "out file usage"
+Write wrappers, pagers or use your tools of choice to display the out file
+contents (tail, multitail, etc.).
+
+.SH CREDITS
+.TP
+ji was build using ii as a reference.
+
+.SH AUTHORS
+Copyright \(co 2010 by Ramil Farkhshatov <ramil (at) iris-comp (dot) ru>
+.SH SEE ALSO
+.BR ii (1),
+.BR echo (1),
+.BR tail (1),
+.BR rlwrap (1),
+.BR inotify (7).
