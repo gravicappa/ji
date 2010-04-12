@@ -200,7 +200,7 @@ mkdir_rec(const char *dir)
   char *p = 0;
   size_t len;
 
-  snprintf(tmp, sizeof(tmp), "%s", dir);
+  strlcpy(tmp, dir, sizeof(tmp));
   len = strlen(tmp);
   if (tmp[len - 1] == '/')
     tmp[len - 1] = 0;
@@ -773,21 +773,8 @@ jabber_process(const char *address, const char *server, const char *pass)
   return ret;
 }
 
-#if 0
 static void
-cleanup()
-{
-  struct contact *c, *p;
-  c = contacts;
-  while ((p = c)) {
-    c = c->next;
-    rm_contact(c);
-  }
-}
-#endif
-
-static void
-usage()
+usage(void)
 {
   fprintf(stderr, "%s",
     "ji - jabber it - " VERSION "\n"
