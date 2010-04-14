@@ -445,8 +445,10 @@ msg_hook(struct context *c, ikspak *pak)
   char *s;
 
   s = iks_find_cdata(pak->x, "body");
-  add_contact(pak->from->partial);
-  print_msg(pak->from->partial, "<%s> %s\n", pak->from->user, s);
+  if (s) {
+    add_contact(pak->from->partial);
+    print_msg(pak->from->partial, "<%s> %s\n", pak->from->user, s);
+  }
   return IKS_FILTER_EAT;
 }
 
