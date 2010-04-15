@@ -273,7 +273,6 @@ send_status(struct context *c, enum ikshowtype status, const char *msg)
   iks *x;
 
   x = iks_make_pres(status, msg);
-  /*log_xml(5, "Presence", x);*/
   iks_send(c->parser, x);
   iks_delete(x);
 }
@@ -300,7 +299,6 @@ join_room(struct context *c, const char *room, const char *nick)
   iks_insert_attrib(x, "to", to);
   iks_insert_attrib(iks_insert(x, "x"), "xmlns", "http://jabber.org/protocol/muc");
   iks_send(c->parser, x);
-  log_xml(5, "join room", x);
   iks_delete(x);
 }
 
