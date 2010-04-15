@@ -293,11 +293,12 @@ join_room(struct context *c, const char *room, const char *nick)
 {
   iks *x;
   char to[JID_BUF];
+  char *muc_ns = "http://jabber.org/protocol/muc";
 
   sprintf(to, "%s/%s", room, nick);
   x = iks_new("presence");
   iks_insert_attrib(x, "to", to);
-  iks_insert_attrib(iks_insert(x, "x"), "xmlns", "http://jabber.org/protocol/muc");
+  iks_insert_attrib(iks_insert(x, "x"), "xmlns", muc_ns);
   iks_send(c->parser, x);
   iks_delete(x);
 }
