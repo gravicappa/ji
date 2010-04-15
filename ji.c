@@ -41,6 +41,7 @@ struct context;
 struct contact;
 
 static void cmd_join(struct context *, struct contact *, char *);
+static void cmd_join_room(struct context *, struct contact *, char *);
 static void cmd_leave(struct context *, struct contact *, char *);
 static void cmd_away(struct context *, struct contact *, char *);
 static void cmd_roster(struct context *, struct contact *, char *);
@@ -51,6 +52,7 @@ struct command {
   void (*fn)(struct context *, struct contact *, char *);
 } commands[] = {
   {'j', cmd_join},
+  {'g', cmd_join_room},
   {'l', cmd_leave},
   {'a', cmd_away},
   {'r', cmd_roster},
@@ -64,6 +66,7 @@ struct contact {
   char jid[JID_BUF];
   char show[STATUS_BUF];
   char status[STATUS_BUF];
+  enum iksubtype type;
 
   struct contact *next;
 };
@@ -92,7 +95,6 @@ static void send_status(struct context *c, enum ikshowtype status,
                         const char *msg);
 static void send_message(struct context *c, enum iksubtype type,
                   const char *to, const char *msg);
-static void request_roster(struct context *c);
 
 static size_t
 strlcpy(char *dst, const char *src, size_t size)
@@ -148,6 +150,7 @@ add_contact(const char *jid)
   strlcpy(u->jid, jid, sizeof(u->jid));
   u->fd = open_pipe(u->jid);
   u->next = contacts;
+  u->type = IKS_TYPE_NONE;
   strcpy(u->show, STR_OFFLINE);
   strcpy(u->status, "");
   contacts = u;
@@ -287,13 +290,17 @@ send_message(struct context *c, enum iksubtype type, const char *to,
 }
 
 static void
-request_roster(struct context *c)
+join_room(struct context *c, const char *room, const char *nick)
 {
   iks *x;
+  char to[JID_BUF];
 
-  x = iks_make_iq(IKS_TYPE_GET, IKS_NS_ROSTER);
-  iks_insert_attrib(x, "id", "roster");
+  sprintf(to, "%s/%s", room, nick);
+  x = iks_new("presence");
+  iks_insert_attrib(x, "to", to);
+  iks_insert_attrib(iks_insert(x, "x"), "xmlns", "http://jabber.org/protocol/muc");
   iks_send(c->parser, x);
+  log_xml(5, "join room", x);
   iks_delete(x);
 }
 
@@ -443,11 +450,17 @@ static int
 msg_hook(struct context *c, ikspak *pak)
 {
   char *s;
+  struct contact *u;
 
   s = iks_find_cdata(pak->x, "body");
   if (s) {
-    add_contact(pak->from->partial);
-    print_msg(pak->from->partial, "<%s> %s\n", pak->from->user, s);
+    u = add_contact(pak->from->partial);
+    if (pak->subtype == IKS_TYPE_GROUPCHAT) {
+      u->type = pak->subtype;
+      print_msg(pak->from->partial, "<%s> %s\n", pak->from->resource, s);
+    } else {
+      print_msg(pak->from->partial, "<%s> %s\n", pak->from->user, s);
+    }
   }
   return IKS_FILTER_EAT;
 }
@@ -469,19 +482,21 @@ presence_hook(struct context *c, ikspak *pak)
   if (!status)
     status = "";
 
-  for (u = contacts; u; u = u->next) {
-    if (!strcmp(u->jid, pak->from->partial)) {
-      if (u->fd > -1 && ((u->show && strcmp(u->show, show))
-                         || (u->status && strcmp(u->status, status)))) {
+  for (u = contacts; u && strcmp(u->jid, pak->from->partial); u = u->next);
+  if (u && u->fd > -1) {
+    if (u->type == IKS_TYPE_GROUPCHAT) {
+      print_msg(pak->from->partial, "-!- %s(%s) is %s (%s)\n",
+                pak->from->resource, pak->from->full, show, status);
+    } else {
+      if ((u->show && strcmp(u->show, show))
+          || (u->status && strcmp(u->status, status))) {
         print_msg(pak->from->partial, "-!- %s(%s) is %s (%s)\n",
                   pak->from->user, pak->from->full, show, status);
       }
       strlcpy(u->show, show, sizeof(u->show));
       strlcpy(u->status, status, sizeof(u->status));
-      break;
     }
-  }
-  if (!u || u->fd < 0) {
+  } else {
     print_msg("", "-!- %s(%s) is %s (%s)\n", pak->from->user, pak->from->full,
               show, status);
   }
@@ -496,24 +511,19 @@ roster_hook(struct context *c, ikspak *pak)
   struct contact *u;
 
   x = iks_find(pak->x, "query");
-  if (x) {
-    for (x = iks_child(x); x; x = iks_next(x)) {
-      if (iks_type(x) == IKS_TAG && !strcmp(iks_name(x), "item")) {
-        name = iks_find_attrib(x, "name");
-        jid = iks_find_attrib(x, "jid");
-        sub = iks_find_attrib(x, "subscription");
-        if (!name)
-          name = jid;
-        for (u = contacts; u; u = u->next)
-          if (!strcmp(u->jid, jid))
-            break;
-        if (u)
-          print_msg("", "* %s - %s - (%s) - %s [%s]\n", name, jid,
-                    u->show, u->status, sub);
-        else
-          print_msg("", "* %s - %s - (Offline) - [%s]\n", name, jid,
-                    sub);
-      }
+  for (x = iks_child(x); x; x = iks_next(x)) {
+    if (iks_type(x) == IKS_TAG && !strcmp(iks_name(x), "item")) {
+      name = iks_find_attrib(x, "name");
+      jid = iks_find_attrib(x, "jid");
+      sub = iks_find_attrib(x, "subscription");
+      if (!name)
+        name = jid;
+      for (u = contacts; u && strcmp(u->jid, jid); u = u->next);
+      if (u)
+        print_msg("", "* %s - %s - (%s) - %s [%s]\n", name, jid,
+                  u->show, u->status, sub);
+      else
+        print_msg("", "* %s - %s - (Offline) - [%s]\n", name, jid, sub);
     }
   }
   return IKS_FILTER_EAT;
@@ -576,6 +586,21 @@ cmd_join(struct context *c, struct contact *u, char *s)
 }
 
 static void
+cmd_join_room(struct context *c, struct contact *u, char *s)
+{
+  char *p;
+  iksid *id;
+
+  p = strchr(s + 3, ' ');
+  if (p)
+    *p = 0;
+  id = iks_id_new(iks_parser_stack(c->parser), s + 3);
+  u = add_contact(id->partial);
+  u->type = IKS_TYPE_GROUPCHAT;
+  join_room(c, id->partial, id->resource);
+}
+
+static void
 cmd_leave(struct context *c, struct contact *u, char *s)
 {
   char *p;
@@ -615,7 +640,12 @@ cmd_away(struct context *c, struct contact *u, char *s)
 static void
 cmd_roster(struct context *c, struct contact *u, char *s)
 {
-  request_roster(c);
+  iks *x;
+
+  x = iks_make_iq(IKS_TYPE_GET, IKS_NS_ROSTER);
+  iks_insert_attrib(x, "id", "roster");
+  iks_send(c->parser, x);
+  iks_delete(x);
 }
 
 static void
@@ -637,18 +667,20 @@ do_contact_input_string(struct context *c, struct contact *u, char *s)
 
   if (s[0] != '/') {
     if (u->jid[0])
-      send_message(c, IKS_TYPE_NONE, u->jid, s);
-    print_msg(u->jid, "<%s> %s\n", me, s);
+      send_message(c, u->type, u->jid, s);
+    if (u->type != IKS_TYPE_GROUPCHAT)
+      print_msg(u->jid, "<%s> %s\n", me, s);
     return;
   }
   for (cmd = commands; cmd->c; ++cmd)
-    if (cmd->c == s[1]) {
+    if (cmd->c == s[1] && cmd->fn != 0) {
       cmd->fn(c, u, s);
       break;
     }
   if (!cmd->c) {
-    send_message(c, IKS_TYPE_NONE, u->jid, s);
-    print_msg(u->jid, "<%s> %s\n", me, s);
+    send_message(c, u->type, u->jid, s);
+    if (u->type != IKS_TYPE_GROUPCHAT)
+      print_msg(u->jid, "<%s> %s\n", me, s);
   }
 }
 
@@ -704,12 +736,6 @@ jabber_do_connection(struct context *c)
             is_running = 0;
         }
       }
-#if 0
-      if (time(0) - last_response >= PING_TIMEOUT) {
-        log_printf(0, "Ping timeout\n");
-        is_running = 0;
-      }
-#endif
       for (u = contacts; u; u = u->next)
         if (FD_ISSET(u->fd, &fds))
           handle_contact_input(c, u);
