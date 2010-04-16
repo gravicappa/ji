@@ -470,9 +470,9 @@ presence_hook(struct context *c, ikspak *pak)
   char *show, *status;
   struct contact *u;
 
-  if (pak->subtype == IKS_TYPE_ERROR) {
+  if (pak->subtype == IKS_TYPE_UNAVAILABLE || pak->subtype == IKS_TYPE_ERROR)
     show = STR_OFFLINE;
-  } else {
+  else {
     show = iks_find_cdata(pak->x, "show");
     status = iks_find_cdata(pak->x, "status");
   }
@@ -484,8 +484,9 @@ presence_hook(struct context *c, ikspak *pak)
   for (u = contacts; u && strcmp(u->jid, pak->from->partial); u = u->next);
   if (u && u->fd > -1) {
     if (u->type == IKS_TYPE_GROUPCHAT) {
-      print_msg(pak->from->partial, "-!- %s(%s) is %s (%s)\n",
-                pak->from->resource, pak->from->full, show, status);
+      if (!strcasecmp(show, STR_ONLINE) || !strcasecmp(show, STR_OFFLINE))
+        print_msg(pak->from->partial, "-!- %s(%s) is %s (%s)\n",
+                  pak->from->resource, pak->from->full, show, status);
     } else {
       if ((u->show && strcmp(u->show, show))
           || (u->status && strcmp(u->status, status))) {
