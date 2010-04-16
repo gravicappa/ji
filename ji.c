@@ -83,7 +83,6 @@ struct context {
 struct contact *contacts = 0;
 char rootdir[PATH_BUF] = "";
 char me[JID_BUF] = "";
-int server_fd = -1;
 
 static int stream_start_hook(struct context *s, int type, iks *node);
 static int stream_normal_hook(struct context *s, int type, iks *node);
@@ -100,6 +99,7 @@ static size_t
 strlcpy(char *dst, const char *src, size_t size)
 {
   const char *s = src;
+
   for (--size; size && *s; --size, ++dst, ++s)
     *dst = *s;
   *dst = 0;
@@ -714,7 +714,6 @@ jabber_do_connection(struct context *c)
   while (is_running) {
     FD_ZERO(&fds);
     FD_SET(fd, &fds);
-    FD_SET(server_fd, &fds);
     max_fd = fd;
     for (u = contacts; u; u = u->next) {
       if (u->fd >= 0) {
