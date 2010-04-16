@@ -467,7 +467,7 @@ msg_hook(struct context *c, ikspak *pak)
 static int
 presence_hook(struct context *c, ikspak *pak)
 {
-  char *show, *status;
+  char *show, *status = 0;
   struct contact *u;
 
   if (pak->subtype == IKS_TYPE_UNAVAILABLE || pak->subtype == IKS_TYPE_ERROR)
