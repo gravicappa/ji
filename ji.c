@@ -1,3 +1,18 @@
+/* Copyright 2010 Ramil Farkhshatov 
+
+  This program is free software: you can redistribute it and/or modify    
+  it under the terms of the GNU General Public License as published by
+  the Free Software Foundation, either version 3 of the License, or
+  (at your option) any later version.
+
+  This program is distributed in the hope that it will be useful,
+  but WITHOUT ANY WARRANTY; without even the implied warranty of
+  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+  GNU General Public License for more details.
+
+  You should have received a copy of the GNU General Public License
+  along with this program.  If not, see <http://www.gnu.org/licenses/>. */
+
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -19,7 +34,6 @@ int use_plain = 0;
 int is_log_xml = 0;
 char *prefix = "talk/xmpp";
 
-#define VERSION "0.1"
 #define DEFAULT_RESOURCE "CCCP"
 #define STR_ONLINE "Online"
 #define STR_OFFLINE "Offline"
@@ -58,7 +72,7 @@ struct command {
   {'a', cmd_away},
   {'r', cmd_roster},
   {'w', cmd_who},
-  {0}
+  {0, 0}
 };
 
 struct contact {
@@ -88,7 +102,7 @@ char me[JID_BUF] = "";
 static int stream_start_hook(struct context *s, int type, iks *node);
 static int stream_normal_hook(struct context *s, int type, iks *node);
 static int stream_stop_hook(struct context *s, int type, iks *node);
-static void make_path(int dst_bytes, char *dst, const char *dir,
+static void make_path(size_t dst_bytes, char *dst, const char *dir,
                       const char *file);
 static int open_pipe(const char *name);
 static void send_status(struct context *c, enum ikshowtype status,
@@ -206,7 +220,7 @@ mkdir_rec(const char *dir)
 }
 
 static void
-make_path(int dst_bytes, char *dst, const char *dir, const char *file)
+make_path(size_t dst_bytes, char *dst, const char *dir, const char *file)
 {
   dst[0] = 0;
   if (dst_bytes > strlen(rootdir) + 1 + strlen(dir) + 1 + strlen(file) + 1)
@@ -399,7 +413,7 @@ jabber_stream_hook(struct context *c, int type, iks *node)
 }
 
 static iksid *
-create_account(iksparser *parser, const char *address, const char *pass)
+create_account(iksparser *parser, const char *address)
 {
   iksid *jid;
   char s[JID_BUF];
@@ -767,7 +781,7 @@ jabber_process(const char *address, const char *server, const char *pass)
     return 1;
   if (is_log_xml)
     iks_set_log_hook(c.parser, (iksLogHook *) log_hook);
-  c.account = create_account(c.parser, address, pass);
+  c.account = create_account(c.parser, address);
   if (c.account) {
     c.password = (char *)pass;
     c.filter = create_filter(&c);

@@ -7,15 +7,15 @@ ji \- jabber it
 
 .SH DESCRIPTION
 .B ji
-is a minimalistic FIFO and filesystem based XMPP client.
-It creates a xmpp directory tree with server and contact jid directories.
-In every directory a FIFO file (\fIin\fP)) and a normal file (\fIout\fP) is
+is a minimalistic FIFO and filesystem based XMPP client. It creates a
+xmpp directory tree with server and contact jid directories. In every
+directory a FIFO file (\fIin\fP)) and a normal file (\fIout\fP) is
 placed.
-The \fIin\fP file is used to communicate with contact and the \fIout\fP file
-includes messages. Fore every opened chat there will be new \fIin\fP and
-\fIout\fP files.
-The basic idea of this is to be able to communicate with a XMPP server with
-basic command line tools.
+The \fIin\fP file is used to communicate with contact and the
+\fIout\fP file includes messages. For every opened chat there will be
+new \fIin\fP and \fIout\fP files.
+The basic idea of this is to be able to communicate with a XMPP server
+with basic command line tools.
 For example if you will open a chat with a contact do 
 .br
 .B "echo '/j contact@server' > in"
@@ -82,8 +82,8 @@ query contact information
 Everything which is not a command will simply be posted to contact.
 .TP
 .FN "out file usage"
-Write wrappers, pagers or use your tools of choice to display the out file
-contents (tail, multitail, etc.).
+Write wrappers, pagers or use your tools of choice to display the out
+file contents (tail, multitail, etc.).
 
 .SH CREDITS
 .TP

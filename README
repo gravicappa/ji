@@ -1,0 +1,20 @@
+Introduction
+------------
+ji is a minimalistic FIFO and filesystem based XMPP client. It creates
+a xmpp directory tree with server and contact jid directories. In
+every directory a FIFO file (\fIin\fP)) and a normal file (\fIout\fP)
+is placed.
+
+The out file in xmpp directory contains server messages (such as
+roster items and contact status changes). The in file is used to
+control ji: open communications with groupchat rooms or with persons,
+query roster items. For every chatroom and contact there will be new
+directory with own in and out files.
+
+The basic idea of this is to be able to communicate with a XMPP server
+with basic command line tools.
+
+Building
+--------
+Edit config.mk to match your local setup. Then type (as root if necessary):
+make clean install

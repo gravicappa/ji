@@ -1,11 +1,6 @@
+include config.mk
 exe = ji
 man = ji.1
-CFLAGS = -O0 -g -pedantic -Wall ${pkg-config --cflags iksemel}
-LDFLAGS = -lutil ${shell pkg-config --libs iksemel}
-prefix = /usr/local
-bindir = ${prefix}/bin
-mandir = ${prefix}/share/man
-man1dir = ${mandir}/man1
 src = ji.c
 obj = ji.o
 
