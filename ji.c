@@ -28,7 +28,7 @@
 int keep_alive_ms = 120;
 int log_level = 10;
 int me_status = 0;
-int use_tls = 0;
+int use_tls = 1;
 int use_sasl = 1;
 int use_plain = 0;
 int is_log_xml = 0;
@@ -87,9 +87,9 @@ struct contact {
 };
 
 struct context {
-  char *password;
+  char *pass;
   iksparser *parser;
-  iksid *account;
+  iksid *jid;
   iksfilter *filter;
 
   int is_authorized;
@@ -128,7 +128,7 @@ log_xml(int level, const char *prefix, iks *x)
   char *s;
 
   s = iks_string(0, x);
-  log_printf(level, "%s: %s\n", prefix, s);
+  log_printf(level, "\n%s:\n%s\n\n", prefix, s);
   iks_free(s);
 }
 
@@ -323,15 +323,15 @@ stream_start_hook(struct context *c, int type, iks *node)
 {
   if (use_tls && !iks_is_secure(c->parser)) {
     iks_start_tls(c->parser);
-  }
-  if (!use_sasl) {
+  } else if (!use_sasl) {
     iks *x;
     char *sid = 0;
 
     if (!use_plain)
       sid = iks_find_attrib(node, "id");
-    x = iks_make_auth(c->account, c->password, sid);
+    x = iks_make_auth(c->jid, c->pass, sid);
     iks_insert_attrib(x, "id", "auth");
+    //log_xml(5, "stream_start_hook x", x);
     iks_send(c->parser, x);
     iks_delete(x);
   }
@@ -341,7 +341,7 @@ stream_start_hook(struct context *c, int type, iks *node)
 static int
 stream_normal_hook(struct context *c, int type, iks *node)
 {
-  int features, method;
+  int features;
   iks *x;
   ikspak *pak;
 
@@ -349,32 +349,31 @@ stream_normal_hook(struct context *c, int type, iks *node)
     features = iks_stream_features(node);
     if (!use_sasl)
       return IKS_OK;
-    if (!use_tls || iks_is_secure(c->parser)) {
-      if (c->is_authorized) {
-        if (features & IKS_STREAM_BIND) {
-          x = iks_make_resource_bind(c->account);
-          iks_send(c->parser, x);
-          iks_delete(x);
-        }
-        if (features & IKS_STREAM_SESSION) {
-          x = iks_make_session();
-          iks_insert_attrib(x, "id", "auth");
-          iks_send(c->parser, x);
-          iks_delete(x);
-        }
-      } else {
-        method = (features & IKS_STREAM_SASL_MD5)
-            ? IKS_SASL_DIGEST_MD5
-            : ((features & IKS_STREAM_SASL_MD5) ? IKS_SASL_PLAIN : -1);
-        if (method >= 0)
-          iks_start_sasl(c->parser, method, c->account->user, c->password);
+    if (use_tls && !iks_is_secure(c->parser))
+      return IKS_OK;
+    if (c->is_authorized) {
+      if (features & IKS_STREAM_BIND) {
+        x = iks_make_resource_bind(c->jid);
+        iks_send(c->parser, x);
+        iks_delete(x);
       }
+      if (features & IKS_STREAM_SESSION) {
+        x = iks_make_session();
+        iks_insert_attrib(x, "id", "auth");
+        iks_send(c->parser, x);
+        iks_delete(x);
+      }
+    } else {
+      if (features & IKS_STREAM_SASL_MD5)
+        iks_start_sasl(c->parser, IKS_SASL_DIGEST_MD5, c->jid->user, c->pass);
+      else if (features & IKS_STREAM_SASL_PLAIN)
+        iks_start_sasl(c->parser, IKS_SASL_PLAIN, c->jid->user, c->pass);
     }
   } else if (!strcmp("failure", iks_name(node))) {
     return IKS_HOOK;
   } else if (!strcmp("success", iks_name(node))) {
     c->is_authorized = 1;
-    iks_send_header(c->parser, c->account->server);
+    iks_send_header(c->parser, c->jid->server);
   } else {
     pak = iks_packet(node);
     iks_filter_packet(c->filter, pak);
@@ -781,11 +780,11 @@ jabber_process(const char *address, const char *server, const char *pass)
     return 1;
   if (is_log_xml)
     iks_set_log_hook(c.parser, (iksLogHook *) log_hook);
-  c.account = create_account(c.parser, address);
-  if (c.account) {
-    c.password = (char *)pass;
+  c.jid = create_account(c.parser, address);
+  if (c.jid) {
+    c.pass = (char *)pass;
     c.filter = create_filter(&c);
-    if (c.filter && jabber_connect(c.parser, c.account, server) == 0) {
+    if (c.filter && jabber_connect(c.parser, c.jid, server) == 0) {
       ret = jabber_do_connection(&c);
     }
   }
