@@ -17,6 +17,7 @@ int use_tls = 0;
 int use_sasl = 1;
 int use_plain = 0;
 int is_log_xml = 0;
+char *prefix = "talk/xmpp";
 
 #define VERSION "0.1"
 #define DEFAULT_RESOURCE "CCCP"
@@ -95,18 +96,6 @@ static void send_status(struct context *c, enum ikshowtype status,
 static void send_message(struct context *c, enum iksubtype type,
                   const char *to, const char *msg);
 
-static size_t
-strlcpy(char *dst, const char *src, size_t size)
-{
-  const char *s = src;
-
-  for (--size; size && *s; --size, ++dst, ++s)
-    *dst = *s;
-  *dst = 0;
-  while(*s++);
-  return s - src - 1;
-}
-
 static void
 log_printf(int level, const char *fmt, ...)
 {
@@ -135,9 +124,9 @@ add_contact(const char *jid)
   char infile[PATH_BUF];
   struct contact *u;
 
-  for (u = contacts; u; u = u->next)
-    if (!strcmp(jid, u->jid))
-      return u;
+  for (u = contacts; u && strcmp(jid, u->jid); u = u->next);
+  if (u)
+    return u;
 
   make_path(sizeof(infile), infile, jid, "in");
   if (!infile[0])
@@ -147,7 +136,7 @@ add_contact(const char *jid)
   if (!u)
     return 0;
 
-  strlcpy(u->jid, jid, sizeof(u->jid));
+  snprintf(u->jid, sizeof(u->jid), "%s", jid);
   u->fd = open_pipe(u->jid);
   u->next = contacts;
   u->type = IKS_TYPE_NONE;
@@ -203,7 +192,7 @@ mkdir_rec(const char *dir)
   char *p = 0;
   size_t len;
 
-  strlcpy(tmp, dir, sizeof(tmp));
+  snprintf(tmp, sizeof(tmp), "%s", dir);
   len = strlen(tmp);
   if (tmp[len - 1] == '/')
     tmp[len - 1] = 0;
@@ -416,7 +405,7 @@ create_account(iksparser *parser, const char *address, const char *pass)
   char s[JID_BUF];
 
   jid = iks_id_new(iks_parser_stack(parser), address);
-  strlcpy(me, jid->user, sizeof(me));
+  snprintf(me, sizeof(me), "%s", jid->user);
   if (jid && !jid->resource) {
     if (sizeof(s) > (strlen(jid->user) + 1 + strlen(jid->server) + 1
                      + strlen(DEFAULT_RESOURCE) + 1)) {
@@ -493,8 +482,8 @@ presence_hook(struct context *c, ikspak *pak)
         print_msg(pak->from->partial, "-!- %s(%s) is %s (%s)\n",
                   pak->from->user, pak->from->full, show, status);
       }
-      strlcpy(u->show, show, sizeof(u->show));
-      strlcpy(u->status, status, sizeof(u->status));
+      snprintf(u->show, sizeof(u->show), "%s", show);
+      snprintf(u->status, sizeof(u->status), "%s", status);
     }
   } else {
     print_msg("", "-!- %s(%s) is %s (%s)\n", pak->from->user, pak->from->full,
@@ -603,36 +592,24 @@ cmd_join_room(struct context *c, struct contact *u, char *s)
 static void
 cmd_leave(struct context *c, struct contact *u, char *s)
 {
-  char *p;
   iksid *id;
-  struct contact *con;
 
-  p = strchr(s + 3, ' ');
-  if (p) {
-    *p = 0;
+  if (s[2] && s[3]) {
     id = iks_id_new(iks_parser_stack(c->parser), s + 3);
-    for (con = contacts; con; con = con->next)
-      if (!strcmp(con->jid, id->partial)) {
-        rm_contact(con);
-        break;
-      }
-  } else if (u->jid[0]) {
+    for (u = contacts; u && strcmp(u->jid, id->partial); u = u->next);
+    if (u) 
+      rm_contact(u);
+  } else if (u->jid[0])
     rm_contact(u);
-  }
 }
 
 static void
 cmd_away(struct context *c, struct contact *u, char *s)
 {
-  char *p;
-
   me_status = !me_status;
-  p = strchr(s + 3, ' ');
-  if (p) {
-    *p = 0;
-  }
   if (s[2]) {
-    strlcpy(statuses[me_status].msg, s + 3, sizeof(statuses[me_status].msg));
+    snprintf(statuses[me_status].msg, sizeof(statuses[me_status].msg),
+             "%s", s + 3);
   }
   send_status(c, statuses[me_status].show, statuses[me_status].msg);
 }
@@ -840,14 +817,14 @@ main(int argc, char *argv[])
   char pw[PW_BUF];
 
   s = getenv("HOME");
-  snprintf(rootdir, sizeof(rootdir), "%s/mnt/jabber", (s) ? s : ".");
+  snprintf(rootdir, sizeof(rootdir), "%s/%s", prefix, (s) ? s : ".");
   s = getenv("USER");
-  strlcpy(me, (s) ? s : "me", sizeof(me));
+  snprintf(me, sizeof(me), "%s", (s) ? s : "me");
 
   for (i = 1; i < argc - 1 && argv[i][0] == '-'; ++i) {
     switch (argv[i][1]) {
-      case 'r': strlcpy(rootdir, argv[++i], sizeof(rootdir)); break;
-      case 'n': strlcpy(me, argv[++i], sizeof(me)); break;
+      case 'r': snprintf(rootdir, sizeof(rootdir), "%s", argv[++i]); break;
+      case 'n': snprintf(me, sizeof(me), "%s", argv[++i]); break;
       case 'j': jid = argv[++i]; break;
       case 's': server = argv[++i]; break;
       case 'p': pwfile = argv[++i]; break;
