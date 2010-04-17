@@ -28,7 +28,7 @@
 int keep_alive_ms = 120;
 int log_level = 10;
 int me_status = 0;
-int use_tls = 1;
+int use_tls = 0;
 int use_sasl = 1;
 int use_plain = 0;
 int is_log_xml = 0;
@@ -331,7 +331,6 @@ stream_start_hook(struct context *c, int type, iks *node)
       sid = iks_find_attrib(node, "id");
     x = iks_make_auth(c->jid, c->pass, sid);
     iks_insert_attrib(x, "id", "auth");
-    //log_xml(5, "stream_start_hook x", x);
     iks_send(c->parser, x);
     iks_delete(x);
   }
