@@ -511,8 +511,7 @@ roster_hook(struct context *c, ikspak *pak)
   char *name, *jid, *sub;
   struct contact *u;
 
-  x = iks_find(pak->x, "query");
-  for (x = iks_child(x); x; x = iks_next(x)) {
+  for (x = iks_child(iks_find(pak->x, "query")); x; x = iks_next(x)) {
     if (iks_type(x) == IKS_TAG && !strcmp(iks_name(x), "item")) {
       name = iks_find_attrib(x, "name");
       jid = iks_find_attrib(x, "jid");
@@ -527,6 +526,10 @@ roster_hook(struct context *c, ikspak *pak)
         print_msg("", "* %s - %s - (Offline) - [%s]\n", name, jid, sub);
     }
   }
+  print_msg("", "End of /R list.\n");
+  for (x = iks_child(iks_find(pak->x, "query")); x; x = iks_next(x))
+    if (iks_type(x) == IKS_TAG && !strcmp(iks_name(x), "item"))
+      request_presence(c, iks_find_attrib(x, "jid"));
   return IKS_FILTER_EAT;
 }
 
@@ -697,8 +700,8 @@ jabber_do_connection(struct context *c)
   time_t last_response;
   struct timeval tv;
 
-  add_contact("");
   fd = iks_fd(c->parser);
+  add_contact("");
   last_response = time(0);
   while (is_running) {
     FD_ZERO(&fds);
