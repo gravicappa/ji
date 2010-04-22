@@ -35,8 +35,8 @@ int is_log_xml = 0;
 char *prefix = "talk/xmpp";
 
 #define DEFAULT_RESOURCE "CCCP"
-#define STR_ONLINE "Online"
-#define STR_OFFLINE "Offline"
+#define STR_ONLINE "online"
+#define STR_OFFLINE "offline"
 #define PING_TIMEOUT 300
 #define JID_BUF 256
 #define PW_BUF 256
@@ -99,9 +99,6 @@ struct contact *contacts = 0;
 char rootdir[PATH_BUF] = "";
 char me[JID_BUF] = "";
 
-static int stream_start_hook(struct context *s, int type, iks *node);
-static int stream_normal_hook(struct context *s, int type, iks *node);
-static int stream_stop_hook(struct context *s, int type, iks *node);
 static void make_path(size_t dst_bytes, char *dst, const char *dir,
                       const char *file);
 static int open_pipe(const char *name);
@@ -483,23 +480,21 @@ presence_hook(struct context *c, ikspak *pak)
     status = "";
 
   for (u = contacts; u && strcmp(u->jid, pak->from->partial); u = u->next);
-  if (u && u->fd > -1) {
+  if (!u || u->type != IKS_TYPE_GROUPCHAT)
+    print_msg("", "-!- %s(%s) is %s (%s)\n", pak->from->user, pak->from->full,
+              show, status);
+  if (u) {
     if (u->type == IKS_TYPE_GROUPCHAT) {
       if (!strcasecmp(show, STR_ONLINE) || !strcasecmp(show, STR_OFFLINE))
         print_msg(pak->from->partial, "-!- %s(%s) is %s (%s)\n",
                   pak->from->resource, pak->from->full, show, status);
     } else {
-      if ((u->show && strcmp(u->show, show))
-          || (u->status && strcmp(u->status, status))) {
+      if (strcmp(u->show, show) || strcmp(u->status, status))
         print_msg(pak->from->partial, "-!- %s(%s) is %s (%s)\n",
                   pak->from->user, pak->from->full, show, status);
-      }
       snprintf(u->show, sizeof(u->show), "%s", show);
       snprintf(u->status, sizeof(u->status), "%s", status);
     }
-  } else {
-    print_msg("", "-!- %s(%s) is %s (%s)\n", pak->from->user, pak->from->full,
-              show, status);
   }
   return IKS_FILTER_EAT;
 }
@@ -800,35 +795,14 @@ usage(void)
   fprintf(stderr, "%s",
     "ji - jabber it - " VERSION "\n"
     "(C)opyright 2010 Ramil Farkhshatov\n"
-    "usage: ji [-r <jabber dir>] [-j <jid>] [-s <server>] [-n <nick>]\n"
-    "          [-p <file with password>]\n");
-}
-
-static int
-read_pw(const char *filename, int pw_bytes, char *pw)
-{
-  FILE *f;
-  int len;
-
-  f = fopen(filename, "r");
-  if (!f)
-    return 1;
-
-  fgets(pw, pw_bytes, f);
-  fclose(f);
-
-  len = strlen(pw);
-  if (pw[len - 1] == '\n')
-    pw[len - 1] = 0;
-
-  return 0;
+    "usage: ji [-r <jabber dir>] [-j <jid>] [-s <server>] [-n <nick>]\n");
 }
 
 int
 main(int argc, char *argv[])
 {
   int i;
-  char *jid = 0, *pwfile = 0, *server = 0, *s;
+  char *jid = 0, *server = 0, *s;
   char pw[PW_BUF];
 
   s = getenv("HOME");
@@ -842,15 +816,14 @@ main(int argc, char *argv[])
       case 'n': snprintf(me, sizeof(me), "%s", argv[++i]); break;
       case 'j': jid = argv[++i]; break;
       case 's': server = argv[++i]; break;
-      case 'p': pwfile = argv[++i]; break;
       default: usage(); return 1;
     }
   }
-  if (!(jid && pwfile)) {
+  if (!jid) {
     usage();
     return 1;
   }
-  if (read_pw(pwfile, sizeof(pw), pw))
+  if (read_line(0, sizeof(pw), pw))
     return 1;
   if (jabber_process(jid, server, pw)) {
     log_printf(0, "Connection error\n");
