@@ -5,6 +5,17 @@
 .SH NAME
 ji \- jabber it
 
+.SH SYNOPSIS
+.B ji
+.RB [ \-j
+.IR jid ]
+.RB [ \-r
+.IR prefix ]
+.RB [ \-s
+.IR servername ]
+.RB [ \-n
+.IR nick ]
+
 .SH DESCRIPTION
 .B ji
 is a minimalistic FIFO and filesystem based XMPP client. It creates a
@@ -21,16 +32,7 @@ For example if you will open a chat with a contact do
 .B "echo '/j contact@server' > in"
 .br
 and ji creates a new chat directory with \fIin\fP and \fIout\fP files.
-.SH SYNOPSIS
-.B ji
-.RB [ \-j
-.IR jid ]
-.RB [ \-r
-.IR prefix ]
-.RB [ \-s
-.IR servername ]
-.RB [ \-n
-.IR nick ]
+
 .SH OPTIONS
 .TP
 .BI \-j " jid"
