@@ -806,7 +806,7 @@ main(int argc, char *argv[])
   char pw[PW_BUF];
 
   s = getenv("HOME");
-  snprintf(rootdir, sizeof(rootdir), "%s/%s", prefix, (s) ? s : ".");
+  snprintf(rootdir, sizeof(rootdir), "%s/%s", (s) ? s : ".", prefix);
   s = getenv("USER");
   snprintf(me, sizeof(me), "%s", (s) ? s : "me");
 
