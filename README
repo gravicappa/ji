@@ -14,6 +14,13 @@ directory with own in and out files.
 The basic idea of this is to be able to communicate with a XMPP server
 with basic command line tools.
 
+Requirements
+------------
+Required iksemel library (http://code.google.com/p/iksemel).
+For working TLS latest svn revision with patch from
+http://code.google.com/p/iksemel/issues/detail?id=19
+is required.
+
 Building
 --------
 Edit config.mk to match your local setup. Then type (as root if necessary):
