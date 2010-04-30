@@ -28,13 +28,13 @@
 int keep_alive_ms = 120;
 int log_level = 10;
 int me_status = 0;
-int use_tls = 0;
+int use_tls = 1;
 int use_sasl = 1;
 int use_plain = 0;
 int is_log_xml = 0;
-char *prefix = "talk/xmpp";
+char *root = "talk/xmpp";
 
-#define DEFAULT_RESOURCE "CCCP"
+#define DEFAULT_RESOURCE "ji"
 #define STR_ONLINE "online"
 #define STR_OFFLINE "offline"
 #define PING_TIMEOUT 300
@@ -168,7 +168,7 @@ rm_contact(struct contact *c)
     contacts = contacts->next;
   else {
     for (p = contacts; p && p->next != c; p = p->next);
-    if (p->next == c)
+    if (p && p->next == c)
       p->next = c->next;
   }
 
@@ -518,7 +518,8 @@ roster_hook(struct context *c, ikspak *pak)
         print_msg("", "* %s - %s - (%s) - %s [%s]\n", name, jid,
                   u->show, u->status, sub);
       else
-        print_msg("", "* %s - %s - (Offline) - [%s]\n", name, jid, sub);
+        print_msg("", "* %s - %s - (%s) - [%s]\n", name, jid, STR_OFFLINE,
+                  sub);
     }
   }
   print_msg("", "End of /R list.\n");
@@ -552,11 +553,9 @@ create_filter(struct context *c)
                         IKS_PAK_MESSAGE, IKS_RULE_DONE);
     iks_filter_add_rule(flt, (iksFilterHook *) presence_hook, c,
                         IKS_RULE_TYPE, IKS_PAK_PRESENCE, IKS_RULE_DONE);
-#if 0
     iks_filter_add_rule(flt, (iksFilterHook *) presence_hook, c,
-                        IKS_RULE_TYPE, IKS_PAK_S10N, IKS_RULE_SUBTYPE,
+                        IKS_RULE_TYPE, IKS_PAK_PRESENCE, IKS_RULE_SUBTYPE,
                         IKS_TYPE_ERROR, IKS_RULE_DONE);
-#endif
     iks_filter_add_rule(flt, (iksFilterHook *) auth_hook, c, IKS_RULE_TYPE,
                         IKS_PAK_IQ, IKS_RULE_SUBTYPE, IKS_TYPE_RESULT,
                         IKS_RULE_ID, "auth", IKS_RULE_DONE);
@@ -655,6 +654,8 @@ do_contact_input_string(struct context *c, struct contact *u, char *s)
   if (s[0] != '/') {
     if (u->jid[0])
       send_message(c, u->type, u->jid, s);
+    else
+      iks_send_raw(c->parser, s);
     if (u->type != IKS_TYPE_GROUPCHAT)
       print_msg(u->jid, "<%s> %s\n", me, s);
     return;
@@ -806,7 +807,7 @@ main(int argc, char *argv[])
   char pw[PW_BUF];
 
   s = getenv("HOME");
-  snprintf(rootdir, sizeof(rootdir), "%s/%s", (s) ? s : ".", prefix);
+  snprintf(rootdir, sizeof(rootdir), "%s/%s", (s) ? s : ".", root);
   s = getenv("USER");
   snprintf(me, sizeof(me), "%s", (s) ? s : "me");
 
