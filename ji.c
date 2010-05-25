@@ -1,6 +1,6 @@
-/* Copyright 2010 Ramil Farkhshatov 
+/* Copyright 2010 Ramil Farkhshatov
 
-  This program is free software: you can redistribute it and/or modify    
+  This program is free software: you can redistribute it and/or modify
   it under the terms of the GNU General Public License as published by
   the Free Software Foundation, either version 3 of the License, or
   (at your option) any later version.
@@ -32,7 +32,7 @@ int use_tls = 1;
 int use_sasl = 1;
 int use_plain = 0;
 int is_log_xml = 0;
-char *root = "talk/xmpp";
+char *root = "talk";
 
 #define DEFAULT_RESOURCE "ji"
 #define STR_ONLINE "online"
@@ -47,7 +47,7 @@ char *root = "talk/xmpp";
 struct status {
   enum ikshowtype show;
   char msg[STATUS_BUF];
-} statuses[] = {
+} stats[] = {
   {IKS_SHOW_AVAILABLE, "Here I am."},
   {IKS_SHOW_AWAY, "Away."},
 };
@@ -87,11 +87,11 @@ struct contact {
 };
 
 struct context {
-  char *pass;
   iksparser *parser;
   iksid *jid;
   iksfilter *filter;
 
+  char pw[PW_BUF];
   int is_authorized;
 };
 
@@ -326,7 +326,7 @@ stream_start_hook(struct context *c, int type, iks *node)
 
     if (!use_plain)
       sid = iks_find_attrib(node, "id");
-    x = iks_make_auth(c->jid, c->pass, sid);
+    x = iks_make_auth(c->jid, c->pw, sid);
     iks_insert_attrib(x, "id", "auth");
     iks_send(c->parser, x);
     iks_delete(x);
@@ -361,9 +361,9 @@ stream_normal_hook(struct context *c, int type, iks *node)
       }
     } else {
       if (features & IKS_STREAM_SASL_MD5)
-        iks_start_sasl(c->parser, IKS_SASL_DIGEST_MD5, c->jid->user, c->pass);
+        iks_start_sasl(c->parser, IKS_SASL_DIGEST_MD5, c->jid->user, c->pw);
       else if (features & IKS_STREAM_SASL_PLAIN)
-        iks_start_sasl(c->parser, IKS_SASL_PLAIN, c->jid->user, c->pass);
+        iks_start_sasl(c->parser, IKS_SASL_PLAIN, c->jid->user, c->pw);
     }
   } else if (!strcmp("failure", iks_name(node))) {
     return IKS_HOOK;
@@ -439,7 +439,7 @@ generic_hook(struct context *c, ikspak *pak)
 static int
 auth_hook(struct context *c, ikspak *pak)
 {
-  send_status(c, statuses[me_status].show, statuses[me_status].msg);
+  send_status(c, stats[me_status].show, stats[me_status].msg);
   return IKS_FILTER_EAT;
 }
 
@@ -489,9 +489,8 @@ presence_hook(struct context *c, ikspak *pak)
         print_msg(pak->from->partial, "-!- %s(%s) is %s (%s)\n",
                   pak->from->resource, pak->from->full, show, status);
     } else {
-      if (strcmp(u->show, show) || strcmp(u->status, status))
-        print_msg(pak->from->partial, "-!- %s(%s) is %s (%s)\n",
-                  pak->from->user, pak->from->full, show, status);
+      print_msg(pak->from->partial, "-!- %s(%s) is %s (%s)\n",
+                pak->from->user, pak->from->full, show, status);
       snprintf(u->show, sizeof(u->show), "%s", show);
       snprintf(u->status, sizeof(u->status), "%s", status);
     }
@@ -606,7 +605,7 @@ cmd_leave(struct context *c, struct contact *u, char *s)
   if (s[2] && s[3]) {
     id = iks_id_new(iks_parser_stack(c->parser), s + 3);
     for (u = contacts; u && strcmp(u->jid, id->partial); u = u->next);
-    if (u) 
+    if (u)
       rm_contact(u);
   } else if (u->jid[0])
     rm_contact(u);
@@ -616,11 +615,9 @@ static void
 cmd_away(struct context *c, struct contact *u, char *s)
 {
   me_status = !me_status;
-  if (s[2]) {
-    snprintf(statuses[me_status].msg, sizeof(statuses[me_status].msg),
-             "%s", s + 3);
-  }
-  send_status(c, statuses[me_status].show, statuses[me_status].msg);
+  if (s[2])
+    snprintf(stats[me_status].msg, sizeof(stats[me_status].msg), "%s", s + 3);
+  send_status(c, stats[me_status].show, stats[me_status].msg);
 }
 
 static void
@@ -767,27 +764,15 @@ jabber_connect(iksparser *p, iksid *jid, const char *server)
 }
 
 static int
-jabber_process(const char *address, const char *server, const char *pass)
+jabber_process(struct context *c, const char *server)
 {
-  int ret = 1;
-  struct context c = { 0 };
-
-  c.parser = iks_stream_new(IKS_NS_CLIENT, &c,
-                            (iksStreamHook *) jabber_stream_hook);
-  if (c.parser == 0)
-    return 1;
   if (is_log_xml)
-    iks_set_log_hook(c.parser, (iksLogHook *) log_hook);
-  c.jid = create_account(c.parser, address);
-  if (c.jid) {
-    c.pass = (char *)pass;
-    c.filter = create_filter(&c);
-    if (c.filter && jabber_connect(c.parser, c.jid, server) == 0) {
-      ret = jabber_do_connection(&c);
-    }
+    iks_set_log_hook(c->parser, (iksLogHook *) log_hook);
+  c->filter = create_filter(c);
+  if (c->filter && jabber_connect(c->parser, c->jid, server) == 0) {
+    return jabber_do_connection(c);
   }
-  iks_parser_delete(c.parser);
-  return ret;
+  return 1;
 }
 
 static void
@@ -802,18 +787,19 @@ usage(void)
 int
 main(int argc, char *argv[])
 {
-  int i;
+  int i, ret;
   char *jid = 0, *server = 0, *s;
-  char pw[PW_BUF];
+  char path_buf[PATH_BUF];
+  struct context c = { 0 };
 
   s = getenv("HOME");
-  snprintf(rootdir, sizeof(rootdir), "%s/%s", (s) ? s : ".", root);
+  snprintf(path_buf, sizeof(path_buf), "%s/%s", (s) ? s : ".", root);
   s = getenv("USER");
   snprintf(me, sizeof(me), "%s", (s) ? s : "me");
 
   for (i = 1; i < argc - 1 && argv[i][0] == '-'; ++i) {
     switch (argv[i][1]) {
-      case 'r': snprintf(rootdir, sizeof(rootdir), "%s", argv[++i]); break;
+      case 'r': snprintf(path_buf, sizeof(path_buf), "%s", argv[++i]); break;
       case 'n': snprintf(me, sizeof(me), "%s", argv[++i]); break;
       case 'j': jid = argv[++i]; break;
       case 's': server = argv[++i]; break;
@@ -824,11 +810,23 @@ main(int argc, char *argv[])
     usage();
     return 1;
   }
-  if (read_line(0, sizeof(pw), pw))
+  if (read_line(0, sizeof(c.pw), c.pw))
     return 1;
-  if (jabber_process(jid, server, pw)) {
+
+  c.parser = iks_stream_new(IKS_NS_CLIENT, &c,
+                            (iksStreamHook *) jabber_stream_hook);
+  if (!c.parser)
+    return 1;
+
+  c.jid = create_account(c.parser, jid);
+  if (!c.jid)
+    return 1;
+
+  snprintf(rootdir, sizeof(rootdir), "%s/%s", path_buf, c.jid->partial);
+
+  if ((ret = jabber_process(&c, server)))
     log_printf(0, "Connection error\n");
-    return 1;
-  }
-  return 0;
+  iks_parser_delete(c.parser);
+
+  return ret;
 }
