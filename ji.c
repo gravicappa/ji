@@ -465,7 +465,7 @@ msg_hook(struct context *c, ikspak *pak)
 static int
 presence_hook(struct context *c, ikspak *pak)
 {
-  char *show, *status = 0;
+  char *show, *s, *status = 0;
   struct contact *u;
 
   if (pak->subtype == IKS_TYPE_UNAVAILABLE || pak->subtype == IKS_TYPE_ERROR)
@@ -478,6 +478,10 @@ presence_hook(struct context *c, ikspak *pak)
     show = STR_ONLINE;
   if (!status)
     status = "";
+  
+  for (s = status; *s; ++s)
+    if (*s == '\n')
+      *s = '\\';
 
   for (u = contacts; u && strcmp(u->jid, pak->from->partial); u = u->next);
   if (!u || u->type != IKS_TYPE_GROUPCHAT)
