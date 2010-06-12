@@ -48,7 +48,7 @@ struct status {
   enum ikshowtype show;
   char msg[STATUS_BUF];
 } stats[] = {
-  {IKS_SHOW_AVAILABLE, "Here I am."},
+  {IKS_SHOW_AVAILABLE, ""},
   {IKS_SHOW_AWAY, "Away."},
 };
 
