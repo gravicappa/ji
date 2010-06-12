@@ -18,7 +18,7 @@ uninstall: all
 	rm ${destdir}${man1dir}/${man}
 
 ${exe}: ${obj}
-	${CC} -o $@ $^ ${LDFLAGS} -o $@ 
+	${CC} -o $@ $^ ${LDFLAGS}
 
 .c.o:
 	${CC} -c ${CFLAGS} $< -o $@
