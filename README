@@ -25,3 +25,7 @@ Building
 --------
 Edit config.mk to match your local setup. Then type (as root if necessary):
 make clean install
+
+Running
+-------
+ji -r $HOME/talk -j jabber@id < password_file
