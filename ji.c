@@ -150,7 +150,7 @@ add_contact(const char *jid)
   snprintf(u->jid, sizeof(u->jid), "%s", jid);
   u->fd = open_pipe(u->jid);
   u->next = contacts;
-  u->type = IKS_TYPE_NONE;
+  u->type = IKS_TYPE_CHAT;
   strcpy(u->show, STR_OFFLINE);
   strcpy(u->status, "");
   contacts = u;
@@ -408,7 +408,7 @@ jabber_stream_hook(struct context *c, int type, iks *node)
 }
 
 static iksid *
-create_account(iksparser *parser, const char *address)
+init_account(iksparser *parser, const char *address)
 {
   iksid *jid;
   char s[JID_BUF];
@@ -433,6 +433,7 @@ generic_hook(struct context *c, ikspak *pak)
   log_printf(1, "Unknown message.\n");
   log_xml(2, "Stanza", pak->x);
   log_printf(2, "\n");
+  print_msg("", "-!- %s\n", iks_string(iks_stack(pak->x), pak->x));
   return IKS_FILTER_EAT;
 }
 
@@ -751,7 +752,8 @@ jabber_connect(iksparser *p, iksid *jid, const char *server)
 {
   int e;
 
-  e = iks_connect_tcp(p, (server) ? server : jid->server, IKS_JABBER_PORT);
+  e = iks_connect_via(p, (server) ? server : jid->server, IKS_JABBER_PORT,
+                      jid->server);
   switch (e) {
   case IKS_OK:
     break;
@@ -822,7 +824,7 @@ main(int argc, char *argv[])
   if (!c.parser)
     return 1;
 
-  c.jid = create_account(c.parser, jid);
+  c.jid = init_account(c.parser, jid);
   if (!c.jid)
     return 1;
 
