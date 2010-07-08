@@ -6,11 +6,12 @@ man1dir = ${mandir}/man1
 destdir = 
 version = 0.1
 
-INCLUDES = ${shell pkg-config --cflags gnutls} \
-           ${shell pkg-config --cflags iksemel}
-LIBS = -lutil \
-       ${shell pkg-config --libs gnutls} \
-       ${shell pkg-config --libs iksemel}
+INCLUDES = ${shell pkg-config --cflags iksemel} \
+           ${shell pkg-config --cflags gnutls}
 
-CFLAGS = -O0 -g -pedantic -Wall -DVERSION=\"${version}\" ${INCLUDES}
+LIBS = -lutil \
+       ${shell pkg-config --libs iksemel} \
+       ${shell pkg-config --libs gnutls} \
+
+CFLAGS = -O0 -g -Wall -DVERSION=\"${version}\" ${INCLUDES}
 LDFLAGS = ${LIBS}
