@@ -713,8 +713,8 @@ jabber_do_connection(struct context *c)
           max_fd = u->fd;
       }
     }
-    tv.tv_sec = keep_alive_ms;
-    tv.tv_usec = 0;
+    tv.tv_sec = 0;
+    tv.tv_usec = keep_alive_ms * 1000;
     res = select(max_fd + 1, &fds, 0, 0, (keep_alive_ms > 0) ? &tv : 0);
     if (res > 0) {
       if (FD_ISSET(fd, &fds)) {
