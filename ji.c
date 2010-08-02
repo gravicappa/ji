@@ -466,15 +466,16 @@ msg_hook(struct context *c, ikspak *pak)
 static int
 presence_hook(struct context *c, ikspak *pak)
 {
-  char *show, *s, *status = 0;
+  char *show, *s, *status;
   struct contact *u;
 
+  show = iks_find_cdata(pak->x, "show");
+  status = iks_find_cdata(pak->x, "status");
   if (pak->subtype == IKS_TYPE_UNAVAILABLE || pak->subtype == IKS_TYPE_ERROR)
     show = STR_OFFLINE;
-  else {
-    show = iks_find_cdata(pak->x, "show");
-    status = iks_find_cdata(pak->x, "status");
-  }
+  else if (pak->type == IKS_PAK_S10N)
+    show = iks_find_attrib(pak->x, "type");
+
   if (!show)
     show = STR_ONLINE;
   if (!status)
