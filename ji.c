@@ -95,6 +95,7 @@ struct context {
   int is_authorized;
 };
 
+int is_negotiated = 0;
 struct contact *contacts = 0;
 char rootdir[PATH_BUF] = "";
 char me[JID_BUF] = "";
@@ -371,6 +372,7 @@ stream_normal_hook(struct context *c, int type, iks *node)
     c->is_authorized = 1;
     iks_send_header(c->parser, c->jid->server);
   } else {
+    is_negotiated = 1;
     pak = iks_packet(node);
     iks_filter_packet(c->filter, pak);
   }
@@ -730,7 +732,7 @@ jabber_do_connection(struct context *c)
         if (FD_ISSET(u->fd, &fds))
           handle_contact_input(c, u);
     } else if (res == 0) {
-      if (keep_alive_ms > 0)
+      if (keep_alive_ms > 0 && is_negotiated)
         iks_send_raw(c->parser, " ");
     } else
       is_running = 0;
