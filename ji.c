@@ -25,7 +25,7 @@
 #include <fcntl.h>
 #include <iksemel.h>
 
-int keep_alive_ms = 120;
+int keep_alive_ms = 12000;
 int log_level = 10;
 int me_status = 0;
 int use_tls = 1;
@@ -582,11 +582,12 @@ cmd_join(struct context *c, struct contact *u, char *s)
   p = strchr(s + 3, ' ');
   if (p)
     *p = 0;
-  id = iks_id_new(iks_parser_stack(c->parser), s + 3);
-  add_contact(id->partial);
-  if (p) {
-    send_message(c, IKS_TYPE_NONE, id->full, p + 1);
-    print_msg(id->partial, "<%s> %s\n", me, p + 1);
+  if ((id = iks_id_new(iks_parser_stack(c->parser), s + 3))) {
+    add_contact(id->partial);
+    if (p) {
+      send_message(c, IKS_TYPE_NONE, id->full, p + 1);
+      print_msg(id->partial, "<%s> %s\n", me, p + 1);
+    }
   }
 }
 
@@ -599,10 +600,11 @@ cmd_join_room(struct context *c, struct contact *u, char *s)
   p = strchr(s + 3, ' ');
   if (p)
     *p = 0;
-  id = iks_id_new(iks_parser_stack(c->parser), s + 3);
-  u = add_contact(id->partial);
-  u->type = IKS_TYPE_GROUPCHAT;
-  join_room(c, id->partial, id->resource);
+  if ((id = iks_id_new(iks_parser_stack(c->parser), s + 3))) {
+    u = add_contact(id->partial);
+    u->type = IKS_TYPE_GROUPCHAT;
+    join_room(c, id->partial, id->resource);
+  }
 }
 
 static void
@@ -612,6 +614,8 @@ cmd_leave(struct context *c, struct contact *u, char *s)
 
   if (s[2] && s[3]) {
     id = iks_id_new(iks_parser_stack(c->parser), s + 3);
+    if (!id)
+      return;
     for (u = contacts; u && strcmp(u->jid, id->partial); u = u->next);
     if (u)
       rm_contact(u);
@@ -696,7 +700,7 @@ static int
 jabber_do_connection(struct context *c)
 {
   int is_running = 1, res, fd, max_fd;
-  struct contact *u;
+  struct contact *u, *next;
   fd_set fds;
   time_t last_response;
   struct timeval tv;
@@ -728,9 +732,11 @@ jabber_do_connection(struct context *c)
             is_running = 0;
         }
       }
-      for (u = contacts; u; u = u->next)
+      for (u = contacts; u; u = next) {
+        next = u->next;
         if (FD_ISSET(u->fd, &fds))
           handle_contact_input(c, u);
+      }
     } else if (res == 0) {
       if (keep_alive_ms > 0 && is_negotiated)
         iks_send_raw(c->parser, " ");

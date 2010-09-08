@@ -4,7 +4,7 @@ mandir = ${prefix}/share/man
 man1dir = ${mandir}/man1
 
 destdir = 
-version = 0.1
+version = 0.2
 
 INCLUDES = ${shell pkg-config --cflags iksemel} \
            ${shell pkg-config --cflags gnutls}
