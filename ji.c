@@ -110,7 +110,7 @@ add_contact(const char *jid)
   char infile[PATH_BUF];
   struct contact *u;
 
-  for (u = contacts; u && strcmp(jid, u->jid); u = u->next);
+  for (u = contacts; u && strcmp(jid, u->jid); u = u->next) {}
   if (u)
     return u;
 
@@ -142,7 +142,7 @@ rm_contact(struct contact *c)
   if (c == contacts)
     contacts = contacts->next;
   else {
-    for (p = contacts; p && p->next != c; p = p->next);
+    for (p = contacts; p && p->next != c; p = p->next) {}
     if (p && p->next == c)
       p->next = c->next;
   }
@@ -293,9 +293,9 @@ request_presence(struct context *c, const char *to)
 static int
 stream_start_hook(struct context *c, int type, iks *node)
 {
-  if (use_tls && !iks_is_secure(c->parser)) {
+  if (use_tls && !iks_is_secure(c->parser))
     iks_start_tls(c->parser);
-  } else if (!use_sasl) {
+  else if (!use_sasl) {
     iks *x;
     char *sid = 0;
 
@@ -345,6 +345,7 @@ stream_normal_hook(struct context *c, int type, iks *node)
   } else if (!strcmp("success", iks_name(node))) {
     c->is_authorized = 1;
     iks_send_header(c->parser, c->jid->server);
+    print_msg("", "-!- Connected to %s\n", c->jid->server);
   } else {
     is_negotiated = 1;
     pak = iks_packet(node);
@@ -396,9 +397,8 @@ init_account(iksparser *parser, const char *address)
                      + strlen(DEFAULT_RESOURCE) + 1)) {
       sprintf(s, "%s@%s/%s", jid->user, jid->server, DEFAULT_RESOURCE);
       jid = iks_id_new(iks_parser_stack(parser), s);
-    } else {
+    } else
       jid = 0;
-    }
   }
   return jid;
 }
@@ -432,9 +432,8 @@ msg_hook(struct context *c, ikspak *pak)
     if (pak->subtype == IKS_TYPE_GROUPCHAT) {
       u->type = pak->subtype;
       print_msg(pak->from->partial, "<%s> %s\n", pak->from->resource, s);
-    } else {
+    } else
       print_msg(pak->from->partial, "<%s> %s\n", pak->from->user, s);
-    }
   }
   return IKS_FILTER_EAT;
 }
@@ -461,7 +460,7 @@ presence_hook(struct context *c, ikspak *pak)
     if (*s == '\n')
       *s = '\\';
 
-  for (u = contacts; u && strcmp(u->jid, pak->from->partial); u = u->next);
+  for (u = contacts; u && strcmp(u->jid, pak->from->partial); u = u->next) {}
   if (!u || u->type != IKS_TYPE_GROUPCHAT)
     print_msg("", "-!- %s(%s) is %s (%s)\n", pak->from->user, pak->from->full,
               show, status);
@@ -487,14 +486,14 @@ roster_hook(struct context *c, ikspak *pak)
   char *name, *jid, *sub;
   struct contact *u;
 
-  for (x = iks_child(iks_find(pak->x, "query")); x; x = iks_next(x)) {
+  for (x = iks_child(iks_find(pak->x, "query")); x; x = iks_next(x))
     if (iks_type(x) == IKS_TAG && !strcmp(iks_name(x), "item")) {
       name = iks_find_attrib(x, "name");
       jid = iks_find_attrib(x, "jid");
       sub = iks_find_attrib(x, "subscription");
       if (!name)
         name = jid;
-      for (u = contacts; u && strcmp(u->jid, jid); u = u->next);
+      for (u = contacts; u && strcmp(u->jid, jid); u = u->next) {}
       if (u)
         print_msg("", "* %s - %s - (%s) - %s [%s]\n", name, jid,
                   u->show, u->status, sub);
@@ -502,7 +501,6 @@ roster_hook(struct context *c, ikspak *pak)
         print_msg("", "* %s - %s - (%s) - [%s]\n", name, jid, STR_OFFLINE,
                   sub);
     }
-  }
   print_msg("", "End of /R list.\n");
   for (x = iks_child(iks_find(pak->x, "query")); x; x = iks_next(x))
     if (iks_type(x) == IKS_TAG && !strcmp(iks_name(x), "item"))
@@ -590,7 +588,7 @@ cmd_leave(struct context *c, struct contact *u, char *s)
     id = iks_id_new(iks_parser_stack(c->parser), s + 3);
     if (!id)
       return;
-    for (u = contacts; u && strcmp(u->jid, id->partial); u = u->next);
+    for (u = contacts; u && strcmp(u->jid, id->partial); u = u->next) {}
     if (u)
       rm_contact(u);
   } else if (u->jid[0])
@@ -665,9 +663,8 @@ handle_contact_input(struct context *c, struct contact *u)
     u->fd = open_pipe(u->jid);
     if (u->fd < 0)
       rm_contact(u);
-  } else {
+  } else
     do_contact_input_string(c, u, buf);
-  }
 }
 
 static int
@@ -697,7 +694,7 @@ jabber_do_connection(struct context *c)
     tv.tv_usec = keep_alive_ms * 1000;
     res = select(max_fd + 1, &fds, 0, 0, (keep_alive_ms > 0) ? &tv : 0);
     if (res > 0) {
-      if (FD_ISSET(fd, &fds)) {
+      if (FD_ISSET(fd, &fds))
         switch (iks_recv(c->parser, 1)) {
           case IKS_OK:
             last_response = time(0);
@@ -705,7 +702,6 @@ jabber_do_connection(struct context *c)
           default:
             is_running = 0;
         }
-      }
       for (u = contacts; u; u = next) {
         next = u->next;
         if (FD_ISSET(u->fd, &fds))
@@ -758,9 +754,8 @@ jabber_process(struct context *c, const char *server)
   if (is_log_xml)
     iks_set_log_hook(c->parser, (iksLogHook *) log_hook);
   c->filter = create_filter(c);
-  if (c->filter && jabber_connect(c->parser, c->jid, server) == 0) {
+  if (c->filter && jabber_connect(c->parser, c->jid, server) == 0)
     return jabber_do_connection(c);
-  }
   return 1;
 }
 
