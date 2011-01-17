@@ -2,7 +2,7 @@ Introduction
 ------------
 ji is a minimalistic FIFO and filesystem based XMPP client. It creates
 a xmpp directory tree with server and contact jid directories. In
-every directory a FIFO file (\fIin\fP)) and a normal file (\fIout\fP)
+every directory a FIFO file (in) and a normal file (out)
 is placed.
 
 The out file in xmpp directory contains server messages (such as
@@ -16,10 +16,8 @@ with basic command line tools.
 
 Requirements
 ------------
-Required iksemel library (http://code.google.com/p/iksemel).
-For working TLS latest svn revision with patch from
-http://code.google.com/p/iksemel/issues/detail?id=19
-is required.
+Required libxmpp library (http://iris-comp.ru/public/git/libxmpp.git)
+and polarssl (http://polarssl.org).
 
 Building
 --------
