@@ -27,3 +27,8 @@ make clean install
 Running
 -------
 ji -r $HOME/talk -j jabber@id < password_file
+
+Contacts
+--------
+jid: ramil.fh@jabber.ru
+mail: ramil (at) gmx (dot) co (dot) uk
