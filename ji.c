@@ -17,28 +17,45 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <ctype.h>
 #include <time.h>
 #include <unistd.h>
 #include <sys/select.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+#include <netdb.h>
+#include <errno.h>
 #include <fcntl.h>
-#include <iksemel.h>
+
+#include <polarssl/ssl.h>
+#include <polarssl/havege.h>
+
+#include <libxmpp/pool.h>
+#include <libxmpp/node.h>
+#include <libxmpp/xml.h>
+#include <libxmpp/xmpp.h>
+#include <libxmpp/tls.h>
+
 #include "config.h"
 
-struct context;
+static char *x_roster = "<iq type='get' id='roster'>"
+                        "<query xmlns='jabber:iq:roster'/></iq>";
+
 struct contact;
 
-static void cmd_join(struct context *, struct contact *, char *);
-static void cmd_join_room(struct context *, struct contact *, char *);
-static void cmd_leave(struct context *, struct contact *, char *);
-static void cmd_away(struct context *, struct contact *, char *);
-static void cmd_roster(struct context *, struct contact *, char *);
-static void cmd_who(struct context *, struct contact *, char *);
+static void cmd_join(struct xmpp *, struct contact *, char *);
+static void cmd_join_room(struct xmpp *, struct contact *, char *);
+static void cmd_leave(struct xmpp *, struct contact *, char *);
+static void cmd_away(struct xmpp *, struct contact *, char *);
+static void cmd_roster(struct xmpp *, struct contact *, char *);
+static void cmd_who(struct xmpp *, struct contact *, char *);
 
 struct command {
   char c;
-  void (*fn)(struct context *, struct contact *, char *);
+  void (*fn)(struct xmpp *, struct contact *, char *);
 } commands[] = {
   {'j', cmd_join},
   {'g', cmd_join_room},
@@ -51,36 +68,29 @@ struct command {
 
 struct contact {
   int fd;
-
   char jid[JID_BUF];
   char show[STATUS_BUF];
   char status[STATUS_BUF];
-  enum iksubtype type;
-
+  char *type;
   struct contact *next;
 };
 
-struct context {
-  iksparser *parser;
-  iksid *jid;
-  iksfilter *filter;
-
-  char pw[PW_BUF];
-  int is_authorized;
-};
-
-int is_negotiated = 0;
+int in_tls = 0;
+int is_ready = 0;
+int fd = -1;
+struct tls tls;
 struct contact *contacts = 0;
 char rootdir[PATH_BUF] = "";
 char me[JID_BUF] = "";
 
-static void make_path(size_t dst_bytes, char *dst, const char *dir,
-                      const char *file);
 static int open_pipe(const char *name);
-static void send_status(struct context *c, enum ikshowtype status,
-                        const char *msg);
-static void send_message(struct context *c, enum iksubtype type,
-                  const char *to, const char *msg);
+static void send_status(struct xmpp *x, const char *status, const char *msg);
+static void send_message(struct xmpp *x, const char *type, const char *to,
+                         const char *msg);
+
+#define find_contact(v, ns, s) \
+  for (v = contacts; v && (strncmp(v->jid, (s), (ns)) || !u->jid[(ns)]); \
+       v = v->next);
 
 static void
 log_printf(int level, const char *fmt, ...)
@@ -94,27 +104,92 @@ log_printf(int level, const char *fmt, ...)
   }
 }
 
-static void
-log_xml(int level, const char *prefix, iks *x)
+int
+tcp_connect(char *host, int port)
 {
-  char *s;
+  struct sockaddr_in srv_addr;
+  struct hostent *srv_host;
+  int fd;
 
-  s = iks_string(0, x);
-  log_printf(level, "\n%s:\n%s\n\n", prefix, s);
-  iks_free(s);
+  srv_host = gethostbyname(host);
+  if (!srv_host || sizeof(srv_addr.sin_addr) < srv_host->h_length)
+    return -1;
+  fd = socket(AF_INET, SOCK_STREAM, IPPROTO_IP);
+  if (fd < 0)
+    return -1;
+  memcpy(&srv_addr.sin_addr, srv_host->h_addr, srv_host->h_length);
+  srv_addr.sin_family = AF_INET;
+  srv_addr.sin_port = htons(port);
+  if (connect(fd, (struct sockaddr *)&srv_addr, sizeof(srv_addr)) < 0) {
+    close(fd);
+    return -1;
+  }
+  return fd;
+}
+
+static int
+tcp_recv(int bytes, char *buf, void *user)
+{
+  int n;
+  do {
+    n = recv(fd, buf, bytes, 0);
+  } while (n < 0 && errno == EAGAIN);
+  log_printf(20, "tcp_recv [%d/%d]\n", n, bytes);
+  if (bytes > 0 && !n)
+    return -1;
+  return n;
+}
+
+static int
+tcp_send(int bytes, const char *buf, void *user)
+{
+  int w, n;
+  n = 0;
+  while (n < bytes) {
+    w = send(fd, buf + n, bytes - n, 0);
+    if (w < 0)
+      return -1;
+    n += w;
+  }
+  log_printf(20, "tcp_send [%d/%d]\n", n, bytes);
+  return n;
+}
+
+static int
+io_recv(int bytes, char *buf, void *user)
+{
+  int n;
+  n = (in_tls) ? tls_recv(bytes, buf, &tls) : tcp_recv(bytes, buf, user);
+  if (n > 0)
+    log_printf(20, "\n<- %c[%d] '%.*s'\n\n", (in_tls) ? '&' : ' ', n, n, buf);
+  return n;
+}
+
+static int
+io_send(int bytes, const char *buf, void *user)
+{
+  int i;
+  if (log_level >= 20)
+    for (i = 0; i < bytes; i++)
+      if (!isspace(buf[i])) {
+        log_printf(20, "\n-> %c[%d] %.*s\n\n", (in_tls) ? '&' : ' ', bytes,
+                   bytes, buf);
+        break;
+      }
+  return (in_tls) ? tls_send(bytes, buf, &tls) : tcp_send(bytes, buf, user);
 }
 
 static struct contact *
-add_contact(const char *jid)
+add_contact(int njid, const char *jid)
 {
   char infile[PATH_BUF];
   struct contact *u;
 
-  for (u = contacts; u && strcmp(jid, u->jid); u = u->next) {}
+  find_contact(u, njid, jid);
   if (u)
     return u;
 
-  make_path(sizeof(infile), infile, jid, "in");
+  snprintf(infile, sizeof(infile), "%s/%.*s/in", rootdir, njid, jid);
   if (!infile[0])
     return 0;
 
@@ -122,12 +197,12 @@ add_contact(const char *jid)
   if (!u)
     return 0;
 
-  snprintf(u->jid, sizeof(u->jid), "%s", jid);
+  snprintf(u->jid, sizeof(u->jid), "%.*s", njid, jid);
   u->fd = open_pipe(u->jid);
   u->next = contacts;
-  u->type = IKS_TYPE_CHAT;
-  strcpy(u->show, STR_OFFLINE);
-  strcpy(u->status, "");
+  u->type = "chat";
+  snprintf(u->show, sizeof(u->show), "%s", STR_OFFLINE);
+  u->status[0] = 0;
   contacts = u;
 
   return u;
@@ -148,9 +223,8 @@ rm_contact(struct contact *c)
   }
 
   if (c->fd >= 0) {
-    make_path(sizeof(infile), infile, c->jid, "in");
-    if (infile[0])
-      remove(infile);
+    snprintf(infile, sizeof(infile), "%s/%s/in", rootdir, c->jid);
+    remove(infile);
     close(c->fd);
   }
   free(c);
@@ -191,45 +265,34 @@ mkdir_rec(const char *dir)
   mkdir(tmp, S_IRWXU);
 }
 
-static void
-make_path(size_t dst_bytes, char *dst, const char *dir, const char *file)
-{
-  dst[0] = 0;
-  if (dst_bytes > strlen(rootdir) + 1 + strlen(dir) + 1 + strlen(file) + 1)
-    sprintf(dst, "%s/%s/%s", rootdir, dir, file);
-}
-
 static int
 open_pipe(const char *name)
 {
   char path[PATH_BUF];
 
-  make_path(sizeof(path), path, name, "");
+  snprintf(path, sizeof(path), "%s/%s", rootdir, name);
   if (access(path, F_OK) == -1)
     mkdir_rec(path);
-  make_path(sizeof(path), path, name, "in");
-  if (!path[0])
-    return -1;
+  snprintf(path, sizeof(path), "%s/%s/in", rootdir, name);
   if (access(path, F_OK) == -1)
     mkfifo(path, S_IRWXU);
   return open(path, O_RDONLY | O_NONBLOCK, 0);
 }
 
 static void
-print_msg(const char *from, const char *fmt, ...)
+print_msg(int len, const char *from, const char *fmt, ...)
 {
   va_list args;
   char path[PATH_BUF], date[128];
   time_t t;
   FILE *f;
 
-  make_path(sizeof(path), path, from, "");
-  if (!path[0])
-    return;
+  if (!len)
+    len = strlen(from);
+
+  snprintf(path, sizeof(path), "%s/%.*s", rootdir, len, from);
   mkdir_rec(path);
-  make_path(sizeof(path), path, from, "out");
-  if (!path[0])
-    return;
+  snprintf(path, sizeof(path), "%s/%.*s/out", rootdir, len, from);
   f = fopen(path, "a");
   if (f) {
     t = time(0);
@@ -243,389 +306,224 @@ print_msg(const char *from, const char *fmt, ...)
 }
 
 static void
-send_status(struct context *c, enum ikshowtype status, const char *msg)
+send_status(struct xmpp *x, const char *status, const char *msg)
 {
-  iks *x;
-
-  x = iks_make_pres(status, msg);
-  iks_send(c->parser, x);
-  iks_delete(x);
+  const char *p = "<presence><show>%s</show><status>%s</status></presence>";
+  xmpp_printf(x, p, status, msg);
 }
 
 static void
-send_message(struct context *c, enum iksubtype type, const char *to,
+send_message(struct xmpp *x, const char *type, const char *to,
              const char *msg)
 {
-  iks *x;
-
-  x = iks_make_msg(type, to, msg);
-  iks_send(c->parser, x);
-  iks_delete(x);
+  const char *m = "<message to='%s' type='%s'><body>%s</body></message>";
+  xmpp_printf(x, m, to, type, msg);
 }
 
 static void
-join_room(struct context *c, const char *room, const char *nick)
+join_room(struct xmpp *xmpp, const char *to)
 {
-  iks *x;
-  char to[JID_BUF];
-  char *muc_ns = "http://jabber.org/protocol/muc";
-
-  sprintf(to, "%s/%s", room, nick);
-  x = iks_new("presence");
-  iks_insert_attrib(x, "to", to);
-  iks_insert_attrib(iks_insert(x, "x"), "xmlns", muc_ns);
-  iks_send(c->parser, x);
-  iks_delete(x);
+  static const char *muc_ns = "http://jabber.org/protocol/muc";
+  static const char *p = "<presence to='%s'><x xmlns='%s'/></presence>";
+  xmpp_printf(xmpp, p, to, muc_ns);
 }
 
 static void
-request_presence(struct context *c, const char *to)
+request_presence(struct xmpp *xmpp, const char *to)
 {
-  iks *x;
-
-  x = iks_new("presence");
-  iks_insert_attrib(x, "type", "probe");
-  iks_insert_attrib(x, "to", to);
-  iks_send(c->parser, x);
-  iks_delete(x);
+  xmpp_printf(xmpp, "<presence type='probe' to='%s'/>", to);
 }
 
 static int
-stream_start_hook(struct context *c, int type, iks *node)
+msg_hook(int x, struct xmpp *xmpp)
 {
-  if (use_tls && !iks_is_secure(c->parser))
-    iks_start_tls(c->parser);
-  else if (!use_sasl) {
-    iks *x;
-    char *sid = 0;
-
-    if (!use_plain)
-      sid = iks_find_attrib(node, "id");
-    x = iks_make_auth(c->jid, c->pw, sid);
-    iks_insert_attrib(x, "id", "auth");
-    iks_send(c->parser, x);
-    iks_delete(x);
-  }
-  return IKS_OK;
-}
-
-static int
-stream_normal_hook(struct context *c, int type, iks *node)
-{
-  int features;
-  iks *x;
-  ikspak *pak;
-
-  if (!strcmp("stream:features", iks_name(node))) {
-    features = iks_stream_features(node);
-    if (!use_sasl)
-      return IKS_OK;
-    if (use_tls && !iks_is_secure(c->parser))
-      return IKS_OK;
-    if (c->is_authorized) {
-      if (features & IKS_STREAM_BIND) {
-        x = iks_make_resource_bind(c->jid);
-        iks_send(c->parser, x);
-        iks_delete(x);
-      }
-      if (features & IKS_STREAM_SESSION) {
-        x = iks_make_session();
-        iks_insert_attrib(x, "id", "auth");
-        iks_send(c->parser, x);
-        iks_delete(x);
-      }
-    } else {
-      if (features & IKS_STREAM_SASL_MD5)
-        iks_start_sasl(c->parser, IKS_SASL_DIGEST_MD5, c->jid->user, c->pw);
-      else if (features & IKS_STREAM_SASL_PLAIN)
-        iks_start_sasl(c->parser, IKS_SASL_PLAIN, c->jid->user, c->pw);
-    }
-  } else if (!strcmp("failure", iks_name(node))) {
-    return IKS_HOOK;
-  } else if (!strcmp("success", iks_name(node))) {
-    c->is_authorized = 1;
-    iks_send_header(c->parser, c->jid->server);
-    print_msg("", "-!- Connected to %s\n", c->jid->server);
-  } else {
-    is_negotiated = 1;
-    pak = iks_packet(node);
-    iks_filter_packet(c->filter, pak);
-  }
-  return IKS_OK;
-}
-
-static int
-stream_error_hook(struct context *c, int type, iks *node)
-{
-  log_printf(0, "Error: Stream error\n");
-  return IKS_HOOK;
-}
-
-static int
-stream_stop_hook(struct context *c, int type, iks *node)
-{
-  log_printf(3, "Server disconnected\n");
-  return IKS_HOOK;
-}
-
-static int
-jabber_stream_hook(struct context *c, int type, iks *node)
-{
-  int ret = IKS_OK;
-
-  switch (type) {
-    case IKS_NODE_START: ret = stream_start_hook(c, type, node); break;
-    case IKS_NODE_NORMAL: ret = stream_normal_hook(c, type, node); break;
-    case IKS_NODE_STOP: ret = stream_stop_hook(c, type, node); break;
-    case IKS_NODE_ERROR: ret = stream_error_hook(c, type, node); break;
-  }
-  if (node)
-    iks_delete(node);
-  return ret;
-}
-
-static iksid *
-init_account(iksparser *parser, const char *address)
-{
-  iksid *jid;
-  char s[JID_BUF];
-
-  jid = iks_id_new(iks_parser_stack(parser), address);
-  snprintf(me, sizeof(me), "%s", jid->user);
-  if (jid && !jid->resource) {
-    if (sizeof(s) > (strlen(jid->user) + 1 + strlen(jid->server) + 1
-                     + strlen(DEFAULT_RESOURCE) + 1)) {
-      sprintf(s, "%s@%s/%s", jid->user, jid->server, DEFAULT_RESOURCE);
-      jid = iks_id_new(iks_parser_stack(parser), s);
-    } else
-      jid = 0;
-  }
-  return jid;
-}
-
-static int
-generic_hook(struct context *c, ikspak *pak)
-{
-  log_printf(1, "Unknown message.\n");
-  log_xml(2, "Stanza", pak->x);
-  log_printf(2, "\n");
-  print_msg("", "-!- %s\n", iks_string(iks_stack(pak->x), pak->x));
-  return IKS_FILTER_EAT;
-}
-
-static int
-auth_hook(struct context *c, ikspak *pak)
-{
-  send_status(c, stats[me_status].show, stats[me_status].msg);
-  return IKS_FILTER_EAT;
-}
-
-static int
-msg_hook(struct context *c, ikspak *pak)
-{
-  char *s;
+  char *s, *from, *part, *n, *type;
+  int npart, len;
   struct contact *u;
 
-  s = iks_find_cdata(pak->x, "body");
-  if (s) {
-    u = add_contact(pak->from->partial);
-    if (pak->subtype == IKS_TYPE_GROUPCHAT) {
-      u->type = pak->subtype;
-      print_msg(pak->from->partial, "<%s> %s\n", pak->from->resource, s);
-    } else
-      print_msg(pak->from->partial, "<%s> %s\n", pak->from->user, s);
-  }
-  return IKS_FILTER_EAT;
+  s = xml_node_text(xml_node_find(x, "body", &xmpp->xml.mem), &xmpp->xml.mem);
+  from = xml_node_find_attr(x, "from", &xmpp->xml.mem);
+  part = from ? jid_partial(from, &npart) : 0;
+  if (!part || !s)
+    return 0;
+  u = add_contact(npart, part);
+  type = xml_node_find_attr(x, "type", &xmpp->xml.mem);
+  if (type && !strcmp(type, "groupchat")) {
+    u->type = "groupchat";
+    n = jid_resource(from, &len);
+  } else
+    n = jid_name(from, &len);
+  print_msg(npart, from, "<%.*s> %s\n", len, n, s);
+  return 0;
 }
 
 static int
-presence_hook(struct context *c, ikspak *pak)
+presence_hook(int x, struct xmpp *xmpp)
 {
-  char *show, *s, *status;
+  char *show, *s, *status, *from, *part, *type;
   struct contact *u;
+  int npart, len;
 
-  show = iks_find_cdata(pak->x, "show");
-  status = iks_find_cdata(pak->x, "status");
-  if (pak->subtype == IKS_TYPE_UNAVAILABLE || pak->subtype == IKS_TYPE_ERROR)
+  show = xml_node_text(xml_node_find(x, "show", &xmpp->xml.mem),
+                       &xmpp->xml.mem);
+  status = xml_node_text(xml_node_find(x, "show", &xmpp->xml.mem),
+                         &xmpp->xml.mem);
+  type = xml_node_find_attr(x, "type", &xmpp->xml.mem);
+  from = xml_node_find_attr(x, "from", &xmpp->xml.mem);
+
+  if (!from)
+    return 0;
+  part = jid_partial(from, &npart);
+
+  if (type && !strcmp(type, "unavailable") && !strcmp(type, "error"))
     show = STR_OFFLINE;
-  else if (pak->type == IKS_PAK_S10N)
-    show = iks_find_attrib(pak->x, "type");
+  else if (type && !strcmp(type, "subscribe"))
+    show = "subscribe";
+  else if (type && !strcmp(type, "unsubscribe"))
+    show = "unsubscribe";
 
   if (!show)
     show = STR_ONLINE;
   if (!status)
     status = "";
-  
+
   for (s = status; *s; ++s)
     if (*s == '\n')
       *s = '\\';
 
-  for (u = contacts; u && strcmp(u->jid, pak->from->partial); u = u->next) {}
-  if (!u || u->type != IKS_TYPE_GROUPCHAT)
-    print_msg("", "-!- %s(%s) is %s (%s)\n", pak->from->user, pak->from->full,
-              show, status);
+  find_contact(u, npart, part);
+  if (!u || strcmp(u->type, "groupchat"))
+    print_msg(0, "", "-!- %s is %s (%s)\n", from, show, status);
   if (u) {
-    if (u->type == IKS_TYPE_GROUPCHAT) {
+    if (!strcmp(u->type, "groupchat")) {
+      s = jid_resource(from, &len);
       if (!strcasecmp(show, STR_ONLINE) || !strcasecmp(show, STR_OFFLINE))
-        print_msg(pak->from->partial, "-!- %s(%s) is %s (%s)\n",
-                  pak->from->resource, pak->from->full, show, status);
+        print_msg(npart, part, "-!- %.*s(%s) is %s\n", len, s, from, show);
     } else {
-      print_msg(pak->from->partial, "-!- %s(%s) is %s (%s)\n",
-                pak->from->user, pak->from->full, show, status);
+      s = jid_name(from, &len);
+      print_msg(npart, part, "-!- %s(%s) is %s (%s)\n", s, from, show,
+                status);
       snprintf(u->show, sizeof(u->show), "%s", show);
       snprintf(u->status, sizeof(u->status), "%s", status);
     }
   }
-  return IKS_FILTER_EAT;
+  return 0;
 }
 
 static int
-roster_hook(struct context *c, ikspak *pak)
+roster_hook(int x, struct xmpp *xmpp)
 {
-  iks *x;
-  char *name, *jid, *sub;
-  struct contact *u;
+  struct xml_data *d;
+  char *jid, *name, *sub;
 
-  for (x = iks_child(iks_find(pak->x, "query")); x; x = iks_next(x))
-    if (iks_type(x) == IKS_TAG && !strcmp(iks_name(x), "item")) {
-      name = iks_find_attrib(x, "name");
-      jid = iks_find_attrib(x, "jid");
-      sub = iks_find_attrib(x, "subscription");
-      if (!name)
-        name = jid;
-      for (u = contacts; u && strcmp(u->jid, jid); u = u->next) {}
-      if (u)
-        print_msg("", "* %s - %s - (%s) - %s [%s]\n", name, jid,
-                  u->show, u->status, sub);
-      else
-        print_msg("", "* %s - %s - (%s) - [%s]\n", name, jid, STR_OFFLINE,
-                  sub);
-    }
-  print_msg("", "End of /R list.\n");
-  for (x = iks_child(iks_find(pak->x, "query")); x; x = iks_next(x))
-    if (iks_type(x) == IKS_TAG && !strcmp(iks_name(x), "item"))
-      request_presence(c, iks_find_attrib(x, "jid"));
-  return IKS_FILTER_EAT;
-}
-
-static int
-error_hook(struct context *c, ikspak *pak)
-{
-  log_printf(0, "Error: XMPP\n");
-  log_xml(2, "Stanza", pak->x);
-  log_printf(2, "\n");
-  return IKS_FILTER_EAT;
-}
-
-static iksfilter *
-create_filter(struct context *c)
-{
-  iksfilter *flt;
-
-  flt = iks_filter_new();
-  if (flt) {
-    iks_filter_add_rule(flt, (iksFilterHook *) generic_hook, c,
-                        IKS_RULE_DONE);
-    iks_filter_add_rule(flt, (iksFilterHook *) error_hook, c,
-                        IKS_RULE_SUBTYPE, IKS_TYPE_ERROR, IKS_RULE_DONE);
-    iks_filter_add_rule(flt, (iksFilterHook *) msg_hook, c, IKS_RULE_TYPE,
-                        IKS_PAK_MESSAGE, IKS_RULE_DONE);
-    iks_filter_add_rule(flt, (iksFilterHook *) presence_hook, c,
-                        IKS_RULE_TYPE, IKS_PAK_PRESENCE, IKS_RULE_DONE);
-    iks_filter_add_rule(flt, (iksFilterHook *) presence_hook, c,
-                        IKS_RULE_TYPE, IKS_PAK_PRESENCE, IKS_RULE_SUBTYPE,
-                        IKS_TYPE_ERROR, IKS_RULE_DONE);
-    iks_filter_add_rule(flt, (iksFilterHook *) auth_hook, c, IKS_RULE_TYPE,
-                        IKS_PAK_IQ, IKS_RULE_SUBTYPE, IKS_TYPE_RESULT,
-                        IKS_RULE_ID, "auth", IKS_RULE_DONE);
-    iks_filter_add_rule(flt, (iksFilterHook *) roster_hook, c, IKS_RULE_TYPE,
-                        IKS_PAK_IQ, IKS_RULE_SUBTYPE, IKS_TYPE_RESULT,
-                        IKS_RULE_ID, "roster", IKS_RULE_DONE);
+  for (d = xml_node_data(xml_node_find(x, "query", &xmpp->xml.mem),
+                         &xmpp->xml.mem);
+       d; d = xml_data_next(d, &xmpp->xml.mem)) {
+    if (d->type != XML_NODE)
+      continue;
+    jid = xml_node_find_attr(d->value, "jid", &xmpp->xml.mem);
+    name = xml_node_find_attr(d->value, "name", &xmpp->xml.mem);
+    sub = xml_node_find_attr(d->value, "subscription", &xmpp->xml.mem);
+    if (!name)
+      name = jid;
+    print_msg(0, "", "* %s - %s - [%s]\n", name, jid, STR_OFFLINE, sub);
   }
-  return flt;
+  print_msg(0, "", "End of /R list.\n");
+  for (d = xml_node_data(xml_node_find(x, "query", &xmpp->xml.mem),
+                         &xmpp->xml.mem);
+       d; d = xml_data_next(d, &xmpp->xml.mem)) {
+    if (d->type != XML_NODE)
+      continue;
+    jid = xml_node_find_attr(d->value, "jid", &xmpp->xml.mem);
+    request_presence(xmpp, jid);
+  }
+  return 0;
 }
 
 static void
-cmd_join(struct context *c, struct contact *u, char *s)
+cmd_join(struct xmpp *xmpp, struct contact *u, char *s)
 {
-  char *p;
-  iksid *id;
+  char *p, *part;
+  int len;
 
   p = strchr(s + 3, ' ');
   if (p)
     *p = 0;
-  if ((id = iks_id_new(iks_parser_stack(c->parser), s + 3))) {
-    add_contact(id->partial);
-    if (p) {
-      send_message(c, IKS_TYPE_NONE, id->full, p + 1);
-      print_msg(id->partial, "<%s> %s\n", me, p + 1);
-    }
+  part = jid_partial(s + 3, &len);
+  if (!part)
+    return;
+  add_contact(len, part);
+  if (p) {
+    send_message(xmpp, 0, s + 3, p + 1);
+    print_msg(len, part, "<%s> %s\n", me, p + 1);
   }
 }
 
 static void
-cmd_join_room(struct context *c, struct contact *u, char *s)
+cmd_join_room(struct xmpp *xmpp, struct contact *u, char *s)
 {
-  char *p;
-  iksid *id;
+  char *p, *part, *res;
+  char to[JID_BUF];
+  int npart, nres;
 
   p = strchr(s + 3, ' ');
   if (p)
     *p = 0;
-  if ((id = iks_id_new(iks_parser_stack(c->parser), s + 3))) {
-    u = add_contact(id->partial);
-    u->type = IKS_TYPE_GROUPCHAT;
-    join_room(c, id->partial, id->resource);
-  }
+  part = jid_partial(s + 3, &npart);
+  res = jid_resource(s + 3, &nres);
+  if (!(part && res))
+    return;
+  u = add_contact(npart, part);
+  u->type = "groupchat";
+  snprintf(to, sizeof(to), "%.*s/%.*s", npart, part, nres, res);
+  join_room(xmpp, to);
 }
 
 static void
-cmd_leave(struct context *c, struct contact *u, char *s)
+cmd_leave(struct xmpp *xmpp, struct contact *u, char *s)
 {
-  iksid *id;
+  char *part;
+  int len;
 
   if (s[2] && s[3]) {
-    id = iks_id_new(iks_parser_stack(c->parser), s + 3);
-    if (!id)
+    part = jid_partial(s + 3, &len);
+    if (!part)
       return;
-    for (u = contacts; u && strcmp(u->jid, id->partial); u = u->next) {}
-    if (u)
-      rm_contact(u);
-  } else if (u->jid[0])
-    rm_contact(u);
+    find_contact(u, len, part);
+  }
+  if (!u->jid[0])
+    return;
+  if (!strcmp(u->type, "groupchat"))
+    xmpp_printf(xmpp, "<presence to='%s' type='unavailable'/>", u->jid);
+  rm_contact(u);
 }
 
 static void
-cmd_away(struct context *c, struct contact *u, char *s)
+cmd_away(struct xmpp *xmpp, struct contact *u, char *s)
 {
   me_status = !me_status;
   if (s[2])
     snprintf(stats[me_status].msg, sizeof(stats[me_status].msg), "%s", s + 3);
-  send_status(c, stats[me_status].show, stats[me_status].msg);
+  send_status(xmpp, stats[me_status].show, stats[me_status].msg);
 }
 
 static void
-cmd_roster(struct context *c, struct contact *u, char *s)
+cmd_roster(struct xmpp *xmpp, struct contact *u, char *s)
 {
-  iks *x;
-
-  x = iks_make_iq(IKS_TYPE_GET, IKS_NS_ROSTER);
-  iks_insert_attrib(x, "id", "roster");
-  iks_send(c->parser, x);
-  iks_delete(x);
+  xmpp_printf(xmpp, x_roster);
 }
 
 static void
-cmd_who(struct context *c, struct contact *u, char *s)
+cmd_who(struct xmpp *xmpp, struct contact *u, char *s)
 {
   if (s[2] && s[3])
-    request_presence(c, s + 3);
+    request_presence(xmpp, s + 3);
   else if (u->jid[0])
-    request_presence(c, u->jid);
+    request_presence(xmpp, u->jid);
 }
 
 static void
-do_contact_input_string(struct context *c, struct contact *u, char *s)
+do_contact_input_string(struct xmpp *xmpp, struct contact *u, char *s)
 {
   struct command *cmd;
 
@@ -634,27 +532,27 @@ do_contact_input_string(struct context *c, struct contact *u, char *s)
 
   if (s[0] != '/') {
     if (u->jid[0])
-      send_message(c, u->type, u->jid, s);
+      send_message(xmpp, u->type, u->jid, s);
     else
-      iks_send_raw(c->parser, s);
-    if (u->type != IKS_TYPE_GROUPCHAT)
-      print_msg(u->jid, "<%s> %s\n", me, s);
+      xmpp_printf(xmpp, "%S", s);
+    if (strcmp(u->type, "groupchat"))
+      print_msg(0, u->jid, "<%s> %s\n", me, s);
     return;
   }
   for (cmd = commands; cmd->c; ++cmd)
     if (cmd->c == s[1] && cmd->fn != 0) {
-      cmd->fn(c, u, s);
+      cmd->fn(xmpp, u, s);
       break;
     }
   if (!cmd->c) {
-    send_message(c, u->type, u->jid, s);
-    if (u->type != IKS_TYPE_GROUPCHAT)
-      print_msg(u->jid, "<%s> %s\n", me, s);
+    send_message(xmpp, u->type, u->jid, s);
+    if (strcmp(u->type, "groupchat"))
+      print_msg(0, u->jid, "<%s> %s\n", me, s);
   }
 }
 
 static void
-handle_contact_input(struct context *c, struct contact *u)
+handle_contact_input(struct xmpp *xmpp, struct contact *u)
 {
   static char buf[PIPE_BUF];
 
@@ -664,153 +562,189 @@ handle_contact_input(struct context *c, struct contact *u)
     if (u->fd < 0)
       rm_contact(u);
   } else
-    do_contact_input_string(c, u, buf);
+    do_contact_input_string(xmpp, u, buf);
 }
 
 static int
-jabber_do_connection(struct context *c)
+start_tls(void *user)
 {
-  int is_running = 1, res, fd, max_fd;
+  if (!in_tls && use_tls) {
+    memset(&tls, 0, sizeof(tls));
+    tls.recv = tcp_recv;
+    tls.send = tcp_send;
+    if (tls_start(&tls))
+      return -1;
+    in_tls = 1;
+  }
+  return 0;
+}
+
+static int
+auth_handler(int x, void *user)
+{
+  struct xmpp *xmpp = (struct xmpp *)user;
+  send_status(xmpp, stats[me_status].show, stats[me_status].msg);
+  xmpp_printf(xmpp, x_roster);
+  is_ready = 1;
+  return 0;
+}
+
+static int
+stream_handler(int x, void *user)
+{
+  struct xmpp *xmpp = (struct xmpp *)user;
+  if (!in_tls && use_tls)
+    if (xmpp_starttls(xmpp))
+      return -1;
+  return 0;
+}
+
+static int
+node_handler(int x, void *user)
+{
+  struct xmpp *xmpp = (struct xmpp *)user;
+  int r;
+  char *name;
+
+  r = xmpp_default_node_hook(x, xmpp, user);
+  if (r < 0)
+    return -1;
+  if (r)
+    return 0;
+  name = xml_node_name(x, &xmpp->xml.mem);
+  if (!name)
+    return -1;
+  if (!strcmp(name, "message"))
+    return msg_hook(x, xmpp);
+  if (!strcmp(name, "presence"))
+    return presence_hook(x, xmpp);
+  if (!strcmp(name, "iq")) {
+    name = xml_node_find_attr(x, "id", &xmpp->xml.mem);
+    if (name && !strcmp(name, "roster"))
+      return roster_hook(x, xmpp);
+  }
+  return 0;
+}
+
+static int
+process_server_input(int fd, struct xmpp *xmpp)
+{
+  char buf[DATA_BUF];
+  int n;
+
+  n = io_recv(sizeof(buf), buf, &fd);
+  if (n <= 0)
+    return -1;
+  if (xmpp_process_input(n, buf, xmpp, xmpp))
+    return -1;
+  return 0;
+}
+
+static int
+process_connection(int fd, struct xmpp *xmpp)
+{
+  int res, max_fd;
   struct contact *u, *next;
   fd_set fds;
   time_t last_response;
   struct timeval tv;
 
-  fd = iks_fd(c->parser);
-  add_contact("");
+  add_contact(0, "");
   last_response = time(0);
-  while (is_running) {
+  fcntl(fd, F_SETFL, fcntl(fd, F_GETFL) | O_NONBLOCK);
+  while (1) {
     FD_ZERO(&fds);
     FD_SET(fd, &fds);
     max_fd = fd;
-    for (u = contacts; u; u = u->next) {
+    for (u = contacts; u && is_ready; u = u->next)
       if (u->fd >= 0) {
         FD_SET(u->fd, &fds);
         if (u->fd > max_fd)
           max_fd = u->fd;
       }
-    }
     tv.tv_sec = 0;
     tv.tv_usec = keep_alive_ms * 1000;
     res = select(max_fd + 1, &fds, 0, 0, (keep_alive_ms > 0) ? &tv : 0);
+    if (res < 0)
+      break;
     if (res > 0) {
-      if (FD_ISSET(fd, &fds))
-        switch (iks_recv(c->parser, 1)) {
-          case IKS_OK:
-            last_response = time(0);
-            break;
-          default:
-            is_running = 0;
-        }
+      if (FD_ISSET(fd, &fds) && process_server_input(fd, xmpp))
+        break;
       for (u = contacts; u; u = next) {
         next = u->next;
         if (FD_ISSET(u->fd, &fds))
-          handle_contact_input(c, u);
+          handle_contact_input(xmpp, u);
       }
-    } else if (res == 0) {
-      if (keep_alive_ms > 0 && is_negotiated)
-        iks_send_raw(c->parser, " ");
-    } else
-      is_running = 0;
+    } else if (io_send(1, " ", &fd) < 1)
+      break;
   }
   return 0;
 }
 
 static void
-log_hook(struct context *c, const char *data, size_t size, int is_incoming)
-{
-  if (iks_is_secure(c->parser))
-    fprintf(stderr, "[&] ");
-  fprintf(stderr, (is_incoming) ? "<-\n" : "->\n");
-  fwrite(data, size, 1, stderr);
-  fputs("\n\n", stderr);
-}
-
-static int
-jabber_connect(iksparser *p, iksid *jid, const char *server)
-{
-  int e;
-
-  e = iks_connect_via(p, (server) ? server : jid->server, IKS_JABBER_PORT,
-                      jid->server);
-  switch (e) {
-  case IKS_OK:
-    break;
-  case IKS_NET_NODNS:
-    log_printf(0, "Error: Hostname lookup failed\n");
-    break;
-  case IKS_NET_NOCONN:
-    log_printf(0, "Error: Connection failed\n");
-    break;
-  default:
-    log_printf(0, "Error: I/O\n");
-  }
-  return e != IKS_OK;
-}
-
-static int
-jabber_process(struct context *c, const char *server)
-{
-  if (is_log_xml)
-    iks_set_log_hook(c->parser, (iksLogHook *) log_hook);
-  c->filter = create_filter(c);
-  if (c->filter && jabber_connect(c->parser, c->jid, server) == 0)
-    return jabber_do_connection(c);
-  return 1;
-}
-
-static void
-usage(void)
+die_usage(void)
 {
   fprintf(stderr, "%s",
     "ji - jabber it - " VERSION "\n"
-    "(C)opyright 2010 Ramil Farkhshatov\n"
-    "usage: ji [-r <jabber dir>] [-j <jid>] [-s <server>] [-n <nick>]\n");
+    "(C)opyright 2010-2011 Ramil Farkhshatov\n"
+    "usage: ji [-r dir] [-j jid] [-s server] [-n nick] [-p port]\n");
+  exit(1);
 }
 
 int
-main(int argc, char *argv[])
+main(int argc, char **argv)
 {
-  int i, ret;
-  char *jid = 0, *server = 0, *s;
+  struct xmpp xmpp = {0};
   char path_buf[PATH_BUF];
-  struct context c = { 0 };
+  int i, port = XMPP_PORT, ret = 1;
+  char *jid = 0, *srv = 0, *s;
 
   s = getenv("HOME");
   snprintf(path_buf, sizeof(path_buf), "%s/%s", (s) ? s : ".", root);
   s = getenv("USER");
   snprintf(me, sizeof(me), "%s", (s) ? s : "me");
 
-  for (i = 1; i < argc - 1 && argv[i][0] == '-'; ++i) {
+  for (i = 1; i < argc - 1 && argv[i][0] == '-'; i++)
     switch (argv[i][1]) {
-      case 'r': snprintf(path_buf, sizeof(path_buf), "%s", argv[++i]); break;
-      case 'n': snprintf(me, sizeof(me), "%s", argv[++i]); break;
-      case 'j': jid = argv[++i]; break;
-      case 's': server = argv[++i]; break;
-      default: usage(); return 1;
+    case 'r': snprintf(path_buf, sizeof(path_buf), "%s", argv[++i]); break;
+    case 'n': snprintf(me, sizeof(me), "%s", argv[++i]); break;
+    case 'j': jid = argv[++i]; break;
+    case 's': srv = argv[++i]; break;
+    case 'p': port = atoi(argv[++i]); break;
+    default: die_usage();
     }
-  }
-  if (!jid) {
-    usage();
+  if (!jid)
+    die_usage();
+
+  xmpp.send = io_send;
+  xmpp.tls_fn = start_tls;
+  xmpp.stream_fn = stream_handler;
+  xmpp.node_fn = node_handler;
+  xmpp.auth_fn = auth_handler;
+  xmpp.use_sasl = use_sasl;
+  xmpp.jid = jid;
+
+  if (read_line(0, sizeof(xmpp.pwd), xmpp.pwd))
+    xmpp.pwd[0] = 0;
+
+  if (xmpp_init(&xmpp, 4096))
     return 1;
-  }
-  if (read_line(0, sizeof(c.pw), c.pw))
+
+  if (!srv)
+    srv = xmpp.server;
+
+  s = jid_partial(xmpp.jid, &i);
+  snprintf(rootdir, sizeof(rootdir), "%s/%.*s", path_buf, i, s);
+
+  fd = tcp_connect(srv, port);
+  if (fd < 0)
     return 1;
 
-  c.parser = iks_stream_new(IKS_NS_CLIENT, &c,
-                            (iksStreamHook *) jabber_stream_hook);
-  if (!c.parser)
-    return 1;
+  if (!(xmpp_start(&xmpp) != 0 || process_connection(fd, &xmpp)))
+    ret = 0;
 
-  c.jid = init_account(c.parser, jid);
-  if (!c.jid)
-    return 1;
-
-  snprintf(rootdir, sizeof(rootdir), "%s/%s", path_buf, c.jid->partial);
-
-  if ((ret = jabber_process(&c, server)))
-    log_printf(0, "Connection error\n");
-  iks_parser_delete(c.parser);
-
+  xmpp_clean(&xmpp);
+  close(fd);
+  shutdown(fd, 2);
   return ret;
 }
