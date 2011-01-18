@@ -89,7 +89,7 @@ static void send_message(struct xmpp *x, const char *type, const char *to,
                          const char *msg);
 
 #define find_contact(v, ns, s) \
-  for (v = contacts; v && (strncmp(v->jid, (s), (ns)) || !u->jid[(ns)]); \
+  for (v = contacts; v && (strncmp(v->jid, (s), (ns)) || u->jid[(ns)]); \
        v = v->next);
 
 static void
@@ -366,7 +366,7 @@ presence_hook(int x, struct xmpp *xmpp)
 
   show = xml_node_text(xml_node_find(x, "show", &xmpp->xml.mem),
                        &xmpp->xml.mem);
-  status = xml_node_text(xml_node_find(x, "show", &xmpp->xml.mem),
+  status = xml_node_text(xml_node_find(x, "status", &xmpp->xml.mem),
                          &xmpp->xml.mem);
   type = xml_node_find_attr(x, "type", &xmpp->xml.mem);
   from = xml_node_find_attr(x, "from", &xmpp->xml.mem);
@@ -401,7 +401,7 @@ presence_hook(int x, struct xmpp *xmpp)
         print_msg(npart, part, "-!- %.*s(%s) is %s\n", len, s, from, show);
     } else {
       s = jid_name(from, &len);
-      print_msg(npart, part, "-!- %s(%s) is %s (%s)\n", s, from, show,
+      print_msg(npart, part, "-!- %.*s(%s) is %s (%s)\n", len, s, from, show,
                 status);
       snprintf(u->show, sizeof(u->show), "%s", show);
       snprintf(u->status, sizeof(u->status), "%s", status);
@@ -711,6 +711,7 @@ main(int argc, char **argv)
     case 'j': jid = argv[++i]; break;
     case 's': srv = argv[++i]; break;
     case 'p': port = atoi(argv[++i]); break;
+    case 'l': log_level = atoi(argv[++i]); break;
     default: die_usage();
     }
   if (!jid)
