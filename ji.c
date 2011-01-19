@@ -343,7 +343,7 @@ msg_hook(int x, struct xmpp *xmpp)
   int npart, len;
   struct contact *u;
 
-  s = xml_node_text(xml_node_find(x, "body", &xmpp->xml.mem), &xmpp->xml.mem);
+  s = xml_node_find_text(x, "body", &xmpp->xml.mem);
   from = xml_node_find_attr(x, "from", &xmpp->xml.mem);
   part = from ? jid_partial(from, &npart) : 0;
   if (!part || !s)
@@ -364,47 +364,35 @@ presence_hook(int x, struct xmpp *xmpp)
 {
   char *show, *s, *status, *from, *part, *type;
   struct contact *u;
-  int npart, len;
+  int npart;
 
-  show = xml_node_text(xml_node_find(x, "show", &xmpp->xml.mem),
-                       &xmpp->xml.mem);
-  status = xml_node_text(xml_node_find(x, "status", &xmpp->xml.mem),
-                         &xmpp->xml.mem);
+  show = xml_node_find_text(x, "show", &xmpp->xml.mem);
+  status = xml_node_find_text(x, "status", &xmpp->xml.mem);
   type = xml_node_find_attr(x, "type", &xmpp->xml.mem);
   from = xml_node_find_attr(x, "from", &xmpp->xml.mem);
-
   if (!from)
     return 0;
-  part = jid_partial(from, &npart);
 
-  if (type && !strcmp(type, "unavailable") && !strcmp(type, "error"))
-    show = STR_OFFLINE;
-  else if (type && !strcmp(type, "subscribe"))
-    show = "subscribe";
-  else if (type && !strcmp(type, "unsubscribe"))
-    show = "unsubscribe";
+  if (type && type[0])
+    print_msg(0, "", "-!- %s sends %s\n", from, type);
 
-  if (!show)
-    show = STR_ONLINE;
-  if (!status)
-    status = "";
+  show = show ? show : STR_ONLINE;
+  status = status ? status : "";
 
   for (s = status; *s; ++s)
     if (*s == '\n')
       *s = '\\';
 
+  part = jid_partial(from, &npart);
   find_contact(u, npart, part);
   if (!u || strcmp(u->type, "groupchat"))
     print_msg(0, "", "-!- %s is %s (%s)\n", from, show, status);
   if (u) {
     if (!strcmp(u->type, "groupchat")) {
-      s = jid_resource(from, &len);
       if (!strcasecmp(show, STR_ONLINE) || !strcasecmp(show, STR_OFFLINE))
-        print_msg(npart, part, "-!- %.*s(%s) is %s\n", len, s, from, show);
+        print_msg(npart, part, "-!- %s is %s\n", from, show);
     } else {
-      s = jid_name(from, &len);
-      print_msg(npart, part, "-!- %.*s(%s) is %s (%s)\n", len, s, from, show,
-                status);
+      print_msg(npart, part, "-!- %s is %s (%s)\n", from, show, status);
       snprintf(u->show, sizeof(u->show), "%s", show);
       snprintf(u->status, sizeof(u->status), "%s", status);
     }
@@ -585,8 +573,14 @@ static int
 auth_handler(int x, void *user)
 {
   struct xmpp *xmpp = (struct xmpp *)user;
+  int n;
+  char *name;
+
   send_status(xmpp, stats[me_status].show, stats[me_status].msg);
   xmpp_printf(xmpp, x_roster);
+  name = jid_name(xmpp->jid, &n);
+  if (name)
+    snprintf(me, sizeof(me), "%.*s", n, name);
   is_ready = 1;
   return 0;
 }
