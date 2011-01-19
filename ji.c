@@ -444,7 +444,7 @@ cmd_join(struct xmpp *xmpp, struct contact *u, char *s)
     return;
   add_contact(len, part);
   if (p) {
-    send_message(xmpp, 0, s + 3, p + 1);
+    send_message(xmpp, "chat", s + 3, p + 1);
     print_msg(len, part, "<%s> %s\n", me, p + 1);
   }
 }
