@@ -8,7 +8,7 @@ version = 0.3
 
 inc = -I.
 
-libs = -lutil -Llibxmpp -lxmpp -lpolarssl
+libs = -Llibxmpp -lxmpp -lpolarssl
 
 CFLAGS = -O0 -g -Wall -DVERSION=\"$(version)\" $(inc)
 LDFLAGS = $(libs)
