@@ -670,8 +670,8 @@ process_connection(int fd, struct xmpp *xmpp)
         if (u->fd > max_fd)
           max_fd = u->fd;
       }
-    tv.tv_sec = 0;
-    tv.tv_usec = keep_alive_ms * 1000;
+    tv.tv_sec = keep_alive_ms / 1000;
+    tv.tv_usec = (keep_alive_ms % 1000) * 1000;
     res = select(max_fd + 1, &fds, 0, 0, (keep_alive_ms > 0) ? &tv : 0);
     if (res < 0)
       break;
