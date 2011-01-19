@@ -156,10 +156,12 @@ tcp_send(int bytes, const char *buf, void *user)
 }
 
 static int
-io_recv(int bytes, char *buf, void *user)
+io_recv(int bytes, char *buf, int *remain, void *user)
 {
   int n;
-  n = (in_tls) ? tls_recv(bytes, buf, &tls) : tcp_recv(bytes, buf, user);
+  *remain = 0;
+  n = (in_tls)
+      ? tls_recv(bytes, buf, remain, &tls) : tcp_recv(bytes, buf, user);
   if (n > 0)
     log_printf(20, "\n<- %c[%d] '%.*s'\n\n", (in_tls) ? '&' : ' ', n, n, buf);
   return n;
@@ -630,13 +632,19 @@ static int
 process_server_input(int fd, struct xmpp *xmpp)
 {
   char buf[DATA_BUF];
-  int n;
+  int n, remain;
 
-  n = io_recv(sizeof(buf), buf, &fd);
-  if (n <= 0)
-    return -1;
-  if (xmpp_process_input(n, buf, xmpp, xmpp))
-    return -1;
+  do {
+    n = io_recv(sizeof(buf), buf, &remain, &fd);
+    if (n < 0) {
+      print_msg(0, "", "error: reading from socket\n");
+      return -1;
+    }
+    if (xmpp_process_input(n, buf, xmpp, xmpp)) {
+      print_msg(0, "", "error: processing xmpp xml\n");
+      return -1;
+    }
+  } while (remain > 0);
   return 0;
 }
 
