@@ -373,9 +373,6 @@ presence_hook(int x, struct xmpp *xmpp)
   if (!from)
     return 0;
 
-  if (type && type[0])
-    print_msg(0, "", "-!- %s sends %s\n", from, type);
-
   show = show ? show : STR_ONLINE;
   status = status ? status : "";
 
@@ -385,6 +382,8 @@ presence_hook(int x, struct xmpp *xmpp)
 
   part = jid_partial(from, &npart);
   find_contact(u, npart, part);
+  if (type && type[0] && (!u || strcmp(u->type, "groupchat")))
+    print_msg(0, "", "-!- %s sends %s\n", from, type);
   if (!u || strcmp(u->type, "groupchat"))
     print_msg(0, "", "-!- %s is %s (%s)\n", from, show, status);
   if (u) {
@@ -416,7 +415,7 @@ roster_hook(int x, struct xmpp *xmpp)
     sub = xml_node_find_attr(d->value, "subscription", &xmpp->xml.mem);
     if (!name)
       name = jid;
-    print_msg(0, "", "* %s - %s - [%s]\n", name, jid, STR_OFFLINE, sub);
+    print_msg(0, "", "* %s - %s - [%s]\n", name, jid, sub);
   }
   print_msg(0, "", "End of /R list.\n");
   for (d = xml_node_data(xml_node_find(x, "query", &xmpp->xml.mem),
