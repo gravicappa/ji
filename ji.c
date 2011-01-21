@@ -163,7 +163,7 @@ io_recv(int bytes, char *buf, int *remain, void *user)
   n = (in_tls)
       ? tls_recv(bytes, buf, remain, &tls) : tcp_recv(bytes, buf, user);
   if (n > 0)
-    log_printf(20, "\n<- %c[%d] '%.*s'\n\n", (in_tls) ? '&' : ' ', n, n, buf);
+    log_printf(10, "\n<- %c[%d] '%.*s'\n\n", (in_tls) ? '&' : ' ', n, n, buf);
   return n;
 }
 
@@ -171,10 +171,10 @@ static int
 io_send(int bytes, const char *buf, void *user)
 {
   int i;
-  if (log_level >= 20)
+  if (log_level >= 10)
     for (i = 0; i < bytes; i++)
       if (!isspace(buf[i])) {
-        log_printf(20, "\n-> %c[%d] %.*s\n\n", (in_tls) ? '&' : ' ', bytes,
+        log_printf(10, "\n-> %c[%d] %.*s\n\n", (in_tls) ? '&' : ' ', bytes,
                    bytes, buf);
         break;
       }
@@ -413,9 +413,7 @@ roster_hook(int x, struct xmpp *xmpp)
     jid = xml_node_find_attr(d->value, "jid", &xmpp->xml.mem);
     name = xml_node_find_attr(d->value, "name", &xmpp->xml.mem);
     sub = xml_node_find_attr(d->value, "subscription", &xmpp->xml.mem);
-    if (!name)
-      name = jid;
-    print_msg(0, "", "* %s - %s - [%s]\n", name, jid, sub);
+    print_msg(0, "", "* %s - %s - [%s]\n", name ? name : "", jid, sub);
   }
   print_msg(0, "", "End of /R list.\n");
   for (d = xml_node_data(xml_node_find(x, "query", &xmpp->xml.mem),
@@ -630,11 +628,14 @@ process_server_input(int fd, struct xmpp *xmpp)
   do {
     n = io_recv(sizeof(buf), buf, &remain, &fd);
     if (n < 0) {
-      print_msg(0, "", "error: reading from socket\n");
+      print_msg(0, "", "; error: reading from socket\n");
       return -1;
     }
+    log_printf(20, "; processing state: '%d' buf: '%.*s'\n", xmpp->xml.state,
+               n, buf);
     if (xmpp_process_input(n, buf, xmpp, xmpp)) {
-      print_msg(0, "", "error: processing xmpp xml\n");
+      print_msg(0, "", "; error: processing xmpp xml\n");
+      log_printf(20, "; state: '%d' buf: '%.*s'\n", xmpp->xml.state, n, buf);
       return -1;
     }
   } while (remain > 0);
