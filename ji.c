@@ -184,16 +184,11 @@ io_send(int bytes, const char *buf, void *user)
 static struct contact *
 add_contact(int njid, const char *jid)
 {
-  char infile[PATH_BUF];
   struct contact *u;
 
   find_contact(u, njid, jid);
   if (u)
     return u;
-
-  snprintf(infile, sizeof(infile), "%s/%.*s/in", rootdir, njid, jid);
-  if (!infile[0])
-    return 0;
 
   u = calloc(1, sizeof(struct contact));
   if (!u)
@@ -628,7 +623,7 @@ process_server_input(int fd, struct xmpp *xmpp)
   do {
     n = io_recv(sizeof(buf), buf, &remain, &fd);
     if (n < 0) {
-      print_msg(0, "", "; error: reading from socket\n");
+      print_msg(0, "", "; error: reading from socket (remain: %d)\n", remain);
       return -1;
     }
     log_printf(20, "; processing state: '%d' buf: '%.*s'\n", xmpp->xml.state,
