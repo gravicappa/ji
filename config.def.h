@@ -1,5 +1,5 @@
 int keep_alive_ms = 12000;
-int log_level = 10;
+int log_level = 0;
 int me_status = 0;
 int use_tls = 1;
 int use_sasl = 1;
