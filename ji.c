@@ -368,6 +368,7 @@ presence_hook(int x, struct xmpp *xmpp)
   if (!from)
     return 0;
 
+  show = (!show && type && !strcmp("unavailable", type)) ? type : show;
   show = show ? show : STR_ONLINE;
   status = status ? status : "";
 
