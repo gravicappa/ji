@@ -1,4 +1,4 @@
-/* Copyright 2010 Ramil Farkhshatov
+/* Copyright 2010-2011 Ramil Farkhshatov
 
   This program is free software: you can redistribute it and/or modify
   it under the terms of the GNU General Public License as published by
