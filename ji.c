@@ -33,11 +33,11 @@
 #include <polarssl/ssl.h>
 #include <polarssl/havege.h>
 
-#include <libxmpp/pool.h>
-#include <libxmpp/node.h>
-#include <libxmpp/xml.h>
-#include <libxmpp/xmpp.h>
-#include <libxmpp/tls.h>
+#include <libxmpps/pool.h>
+#include <libxmpps/node.h>
+#include <libxmpps/xml.h>
+#include <libxmpps/xmpp.h>
+#include <libxmpps/tls.h>
 
 #include "config.h"
 
