@@ -644,11 +644,9 @@ process_connection(int fd, struct xmpp *xmpp)
   int res, max_fd;
   struct contact *u, *next;
   fd_set fds;
-  time_t last_response;
   struct timeval tv;
 
   add_contact(0, "");
-  last_response = time(0);
   fcntl(fd, F_SETFL, fcntl(fd, F_GETFL) | O_NONBLOCK);
   while (1) {
     FD_ZERO(&fds);
