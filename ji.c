@@ -105,7 +105,20 @@ log_printf(int level, const char *fmt, ...)
 }
 
 int
-tcp_connect(char *host, int port)
+socket_keepalive(int s)
+{
+  socklen_t optlen;
+  int optval;
+
+  optval = 1;
+  optlen = sizeof(optval);
+  if (setsockopt(s, SOL_SOCKET, SO_KEEPALIVE, &optval, optlen) < 0)
+    return -1;
+  return 0;
+}
+
+int
+tcp_connect(const char *host, int port)
 {
   struct sockaddr_in srv_addr;
   struct hostent *srv_host;
@@ -121,6 +134,10 @@ tcp_connect(char *host, int port)
   srv_addr.sin_family = AF_INET;
   srv_addr.sin_port = htons(port);
   if (connect(fd, (struct sockaddr *)&srv_addr, sizeof(srv_addr)) < 0) {
+    close(fd);
+    return -1;
+  }
+  if (socket_keepalive(fd)) {
     close(fd);
     return -1;
   }
