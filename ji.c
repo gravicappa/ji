@@ -31,7 +31,8 @@
 #include <fcntl.h>
 
 #include <polarssl/ssl.h>
-#include <polarssl/havege.h>
+#include <polarssl/ctr_drbg.h>
+#include <polarssl/entropy.h>
 
 #include <libxmpps/pool.h>
 #include <libxmpps/node.h>
