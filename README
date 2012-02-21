@@ -16,7 +16,7 @@ with basic command line tools.
 
 Requirements
 ------------
-Required libxmpp library (http://iris-comp.ru/public/git/libxmpp.git)
+Required libxmpp library (http://github.com/gravicappa/libxmpps)
 and polarssl (http://polarssl.org).
 
 Building
