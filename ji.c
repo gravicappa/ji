@@ -82,6 +82,7 @@ int fd = -1;
 struct tls tls;
 struct contact *contacts = 0;
 char rootdir[PATH_BUF] = "";
+char evfifo[PATH_BUF] = "";
 char me[JID_BUF] = "";
 
 static int open_pipe(const char *name);
@@ -321,6 +322,25 @@ print_msg(int len, const char *from, const char *fmt, ...)
 }
 
 static void
+notify(char *type, int from_len, char *from, int name_len, char *name,
+       char *msg)
+{
+  int fd, n;
+  static char buf[256];
+
+  if (!evfifo[0])
+    return;
+  if (access(evfifo, F_OK) == -1)
+    mkfifo(evfifo, S_IRWXU);
+  fd = open(evfifo, O_WRONLY | O_NONBLOCK, 0);
+  if (fd < 0)
+    return;
+  n = snprintf(buf, sizeof(buf), "MSG %s %.*s\n", type, from_len, from);
+  write(fd, buf, n);
+  close(fd);
+}
+
+static void
 send_status(struct xmpp *x, const char *status, const char *msg)
 {
   const char *p = "<presence><show>%s</show><status>%s</status></presence>";
@@ -369,6 +389,7 @@ msg_hook(int x, struct xmpp *xmpp)
   } else
     n = jid_name(from, &len);
   print_msg(npart, from, "<%.*s> %s\n", len, n, s);
+  notify(u->type, npart, from, len, n, s);
   return 0;
 }
 
@@ -699,9 +720,10 @@ static void
 die_usage(void)
 {
   fprintf(stderr, "%s",
-    "ji - jabber it - " VERSION "\n"
-    "(C)opyright 2010-2011 Ramil Farkhshatov\n"
-    "usage: ji [-r dir] [-j jid] [-s server] [-n nick] [-p port]\n");
+          "ji - jabber it - " VERSION "\n"
+          "(C)opyright 2010-2011 Ramil Farkhshatov\n"
+          "usage: ji [-r dir] [-j jid] [-s server] [-n nick] [-p port]"
+          " [-e fifo]\n");
   exit(1);
 }
 
@@ -726,6 +748,7 @@ main(int argc, char **argv)
     case 's': srv = argv[++i]; break;
     case 'p': port = atoi(argv[++i]); break;
     case 'l': log_level = atoi(argv[++i]); break;
+    case 'e': snprintf(evfifo, sizeof(evfifo), "%s", argv[++i]); break;
     default: die_usage();
     }
   if (!jid)

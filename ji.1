@@ -1,97 +1,135 @@
-.de FN
-\fI\|\\$1\|\fP\\$2
-..
-.TH ji 1
-.SH NAME
-ji \- jabber it
+.Dd May 17, 2012
+.Dt JI 1 1
+.Os
+.Sh NAME
 
-.SH SYNOPSIS
-.B ji
-.RB [ \-j
-.IR jid ]
-.RB [ \-r
-.IR prefix ]
-.RB [ \-s
-.IR servername ]
-.RB [ \-n
-.IR nick ]
+.Nm ji
+.Nd filesystem-based jabber client
 
-.SH DESCRIPTION
-.B ji
-is a minimalistic FIFO and filesystem based XMPP client. It creates a
-xmpp directory tree with server and contact jid directories. In every
-directory a FIFO file (\fIin\fP) and a normal file (\fIout\fP) is
-placed.
-The \fIin\fP file is used to communicate with contact and the
-\fIout\fP file includes messages. For every opened chat there will be
-new \fIin\fP and \fIout\fP files.
-The basic idea of this is to be able to communicate with a XMPP server
-with basic command line tools.
+.Sh SYNOPSIS
+.Nm ji
+.Op Fl j Ar jid
+.Op Fl r Ar prefix
+.Op Fl s Ar servername
+.Op Fl n Ar nick
+.Op Fl e Ar event-fifo
+
+.Sh DESCRIPTION
+.Nm
+is a minimalistic FIFO and filesystem based XMPP client. It creates a xmpp
+directory tree with server and contact jid directories. In every directory a
+FIFO file
+.Pa ( in )
+and a normal file
+.Pa ( out )
+is placed.
+The 
+.Pa in
+file is used to communicate with contact and the
+.Pa out
+file includes messages. For every opened chat there will be
+new 
+.Pa in
+and 
+.Pa out
+files.
+The basic idea of this is to be able to communicate with a XMPP server with
+basic command line tools.
 For example if you will open a chat with a contact do 
-.br
-.B "echo '/j contact@server' > in"
-.br
-and ji creates a new chat directory with \fIin\fP and \fIout\fP files.
 
-.SH OPTIONS
-.TP
-.BI \-j " jid"
+.Dl echo '/j contact@server' > in
+
+and 
+.Nm
+creates a new chat directory with 
+.Pa in 
+and 
+.Pa out 
+files.
+
+.Bl -tag
+.It Ar -j jid
 specifies your JID in form 
-.I user@server/resource
-.TP
-.BI \-r " prefix"
-overrides the default jabber path (~/mnt/jabber).
-.TP
-.BI \-s " servername"
-overrides server name specified in JID.
-.TP
-.BI \-n " nick"
-overrides your default nickname appearing in history files (me).
-.TP
-ji reads password from standard input.
+.Em user@server/resource
 
-.SH DIRECTORIES
-.TP
-.FN ~/mnt/jabber
+.It Ar -r prefix
+overrides the default jabber path
+.Pa ( $HOME/talk ) .
+
+.It Ar -s servername
+overrides server name specified in JID.
+
+.It Ar -n nick
+overrides your default nickname appearing in history files 
+.Em ( me ) .
+
+.It Ar -e event-fifo
+specifies fifo for notifications.
+.El
+
+.Nm
+reads password from standard input.
+
+.Sh DIRECTORIES
+.Pa $HOME/talk
+.Pp
 In this directory the jabber tree will be created which contains FIFO,
 the output file and contacts directories. If you open a chat with
 someone (or vice versa) a new directory with the name of collocutor's
-JID will be created in the ~/mnt/jabber directory.
+JID will be created in the 
+.Pa $HOME/talk
+directory.
 
-.SH COMMANDS
-.TP
-.FN /j " jid [<message>]"
-open conversation
-.TP
-.FN /g " room@jid/nick"
-join groupchat room with given nick
-.TP
-.FN /l " [jid]"
-close conversation
-.TP
-.FN /r
-query roster items
-.TP
-.FN /a " [<presence message>]"
-toggle online/away status
-.TP
-.FN /w " [jid]"
-query contact information
-.TP
+.Sh COMMANDS
+.Bl -tag -width ...
+.It Ic /j jid [<message>]
+opens conversation.
+
+.It Ic /g room@jid/nick
+joins groupchat room with given nick.
+
+.It Ic /l [jid]
+closes conversation.
+
+.It Ic /r
+queries roster items.
+
+.It Ic /a [<presence message>]
+toggles online/away status.
+
+.It Ic /w [jid]
+queries contact information (presence and status message).
+.El
+
 Everything which is not a command will simply be posted to contact.
-.TP
-.FN "out file usage"
-Write wrappers, pagers or use your tools of choice to display the out
+.Ss Working with out
+Write wrappers, pagers or use your tools of choice to display the 
+.Pa out
 file contents (tail, multitail, etc.).
 
-.SH CREDITS
-.TP
-ji was inspired by ii (http://tools.suckless.org/ii).
+.Ss Event fifo
+Is designed for notifications. It emits strings
 
-.SH AUTHORS
-Copyright \(co 2010 by Ramil Farkhshatov <ramil (at) gmx (dot) co (dot) uk>
-.SH SEE ALSO
-.BR echo (1),
-.BR tail (1),
-.BR rlwrap (1),
-.BR ii (1).
+.Dl MSG <type> <jid>
+
+where the type is either 
+.Ql chat
+or
+.Ql groupchat
+and jid is sender's address.
+
+.Sh CREDITS
+.Nm
+was inspired by 
+.Em ii
+(http://tools.suckless.org/ii).
+
+.Sh AUTHORS
+Copyright \(co 2010–2012 by
+.An Ramil Farkhshatov <ramil@gmx.co.uk>
+
+.Sh SEE ALSO
+.Xr echo 1 ,
+.Xr tail 1 ,
+.Xr rlwrap 1 ,
+.Xr ii 1 .

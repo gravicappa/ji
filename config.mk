@@ -4,11 +4,11 @@ mandir = $(prefix)/share/man
 man1dir = $(mandir)/man1
 
 destdir = 
-version = 0.4
+version = 0.5
 
 inc = -I.
 
-libs = -lxmpps -lpolarssl
+libs = -Llibxmpps -lxmpps -lpolarssl
 
 CFLAGS = -Os -Wall -DVERSION=\"$(version)\" $(inc)
 LDFLAGS = $(libs)
