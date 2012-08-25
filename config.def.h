@@ -3,7 +3,6 @@ int log_level = 0;
 int me_status = 0;
 int use_tls = 1;
 int use_sasl = 1;
-int use_plain = 0;
 int is_log_xml = 0;
 int show_log = 0;
 char *root = "talk";
