@@ -4,7 +4,7 @@ mandir = $(prefix)/share/man
 man1dir = $(mandir)/man1
 
 destdir = 
-version = 0.5
+version = 0.6
 
 inc = -I.
 

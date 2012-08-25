@@ -386,6 +386,9 @@ msg_hook(int x, struct xmpp *xmpp)
   if (type && !strcmp(type, "groupchat")) {
     u->type = "groupchat";
     n = jid_resource(from, &len);
+  } else if (!strcmp(u->type, "groupchat")) {
+    n = from;
+    len = strlen(n);
   } else
     n = jid_name(from, &len);
   print_msg(npart, from, "<%.*s> %s\n", len, n, s);
