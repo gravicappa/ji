@@ -638,8 +638,11 @@ node_handler(int x, void *user)
   char *name;
 
   r = xmpp_default_node_hook(x, xmpp, user);
-  if (r < 0)
+  if (r < 0) {
+    if (!xmpp->is_authorized)
+      fprintf(stderr, "Authorization error.\n");
     return -1;
+  }
   if (r)
     return 0;
   name = xml_node_name(x, &xmpp->xml.mem);
@@ -726,7 +729,8 @@ die_usage(void)
           "ji - jabber it - " VERSION "\n"
           "(C)opyright 2010-2011 Ramil Farkhshatov\n"
           "usage: ji [-r dir] [-j jid] [-s server] [-n nick] [-p port]"
-          " [-e fifo]\n");
+          " [-e fifo]\n"
+          "* GTalk users should specify `-s talk.google.com`\n");
   exit(1);
 }
 

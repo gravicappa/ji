@@ -2,7 +2,7 @@ Introduction
 ------------
 ji is a minimalistic FIFO and filesystem based XMPP client. It creates
 a xmpp directory tree with server and contact jid directories. In
-every directory a FIFO file (in) and a normal file (out)
+every directory a FIFO file (`in`) and a normal file (`out`)
 is placed.
 
 The out file in xmpp directory contains server messages (such as
@@ -16,19 +16,25 @@ with basic command line tools.
 
 Requirements
 ------------
-Required libxmpp library (http://github.com/gravicappa/libxmpps)
-and polarssl (http://polarssl.org).
+Required [libxmpp library](https://github.com/gravicappa/libxmpps)
+and [polarssl](http://polarssl.org).
 
 Building
 --------
 Edit config.mk to match your local setup. Then type (as root if necessary):
-make clean install
+
+    make clean install
 
 Running
 -------
-ji -r $HOME/talk -j jabber@id < password_file
+
+    ji -j jabber@id <password_file
+
+or if you are GTalk user:
+
+    ji -j .....@gmail.com -s talk.google.com <password_file
 
 Contacts
 --------
-jid: ramil.fh@jabber.ru
-mail: ramil (at) gmx (dot) co (dot) uk
+* jid: ramil.fh@jabber.ru
+* mail: ramil (at) gmx (dot) co (dot) uk
