@@ -34,6 +34,9 @@ or if you are GTalk user:
 
     ji -j .....@gmail.com -s talk.google.com <password_file
 
+where `password_file` is a file containing only your password in a single
+line.
+
 Contacts
 --------
 * jid: ramil.fh@jabber.ru
