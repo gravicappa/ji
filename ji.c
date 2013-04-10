@@ -356,11 +356,11 @@ send_message(struct xmpp *x, const char *type, const char *to,
 }
 
 static void
-join_room(struct xmpp *xmpp, const char *to)
+join_room(struct xmpp *xmpp, const char *to, const char *pwd)
 {
   static const char *muc_ns = "http://jabber.org/protocol/muc";
-  static const char *p = "<presence to='%s'><x xmlns='%s'/></presence>";
-  xmpp_printf(xmpp, p, to, muc_ns);
+  static const char *p = "<presence to='%s'><x xmlns='%s'><password>%s</password></x></presence>";
+  xmpp_printf(xmpp, p, to, muc_ns, pwd);
 }
 
 static void
@@ -487,11 +487,12 @@ cmd_join(struct xmpp *xmpp, struct contact *u, char *s)
 static void
 cmd_join_room(struct xmpp *xmpp, struct contact *u, char *s)
 {
-  char *p, *part, *res;
+  char *p, *part, *res, *pwd;
   char to[JID_BUF];
   int npart, nres;
 
   p = strchr(s + 3, ' ');
+  pwd = p && *p ? (*(p + 1) ? p + 1 : "") : "";
   if (p)
     *p = 0;
   part = jid_partial(s + 3, &npart);
@@ -501,7 +502,7 @@ cmd_join_room(struct xmpp *xmpp, struct contact *u, char *s)
   u = add_contact(npart, part);
   u->type = "groupchat";
   snprintf(to, sizeof(to), "%.*s/%.*s", npart, part, nres, res);
-  join_room(xmpp, to);
+  join_room(xmpp, to, pwd);
 }
 
 static void
