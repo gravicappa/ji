@@ -359,7 +359,8 @@ static void
 join_room(struct xmpp *xmpp, const char *to, const char *pwd)
 {
   static const char *muc_ns = "http://jabber.org/protocol/muc";
-  static const char *p = "<presence to='%s'><x xmlns='%s'><password>%s</password></x></presence>";
+  static const char *p = "<presence to='%s'><x xmlns='%s'>"
+                         "<password>%s</password></x></presence>";
   xmpp_printf(xmpp, p, to, muc_ns, pwd);
 }
 
