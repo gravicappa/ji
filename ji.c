@@ -493,7 +493,7 @@ cmd_join_room(struct xmpp *xmpp, struct contact *u, char *s)
   int npart, nres;
 
   p = strchr(s + 3, ' ');
-  pwd = p && *p ? (*(p + 1) ? p + 1 : "") : "";
+  pwd = (p && *p && *(p + 1)) ? p + 1 : "";
   if (p)
     *p = 0;
   part = jid_partial(s + 3, &npart);
