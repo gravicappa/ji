@@ -518,7 +518,7 @@ cmd_leave(struct xmpp *xmpp, struct contact *u, char *s)
       return;
     find_contact(u, len, part);
   }
-  if (!u->jid[0])
+  if (!u || !u->jid[0])
     return;
   if (!strcmp(u->type, "groupchat"))
     xmpp_printf(xmpp, "<presence to='%s' type='unavailable'/>", u->jid);
